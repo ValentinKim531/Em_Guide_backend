@@ -152,7 +152,6 @@ async def process_message(record, db: Postgres):
                 {
                     "user_id": uuid.UUID(user_id),
                     "content": gpt_response_json,
-                    "created_at": get_current_time_in_almaty_naive(),
                     "is_created_by_user": False,
                 },
                 Message,
