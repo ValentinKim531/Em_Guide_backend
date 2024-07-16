@@ -9,6 +9,7 @@ from services.database import async_session
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI()

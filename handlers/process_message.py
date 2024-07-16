@@ -12,12 +12,17 @@ from crud import Postgres
 from utils.config import ASSISTANT2_ID, ASSISTANT_ID
 import uuid
 
+# Инициализация логирования
+logging.basicConfig(level=logging.INFO)
 
-# Инициализация Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Настройка уровня логирования для SQLAlchemy
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 # Логирование
 logger = logging.getLogger(__name__)
+
+# Инициализация Supabase
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 async def send_to_gpt(
@@ -75,14 +80,20 @@ async def subscribe_to_messages(db: Postgres):
                     if result:
                         try:
                             message = json.loads(result)
-                            # Обработка новых сообщений
                             if message.get("event") == "INSERT":
                                 record = message["payload"]["record"]
                                 if record["is_created_by_user"]:
                                     logger.info(
                                         f"Processing new message: {record}"
                                     )
-                                    await process_message(record, db)
+                                    # Проверка, если сообщение уже обработано
+                                    if not await redis_client.is_message_processed(
+                                        record["id"]
+                                    ):
+                                        await process_message(record, db)
+                                        await redis_client.mark_message_as_processed(
+                                            record["user_id"], record["id"]
+                                        )
                         except json.JSONDecodeError as e:
                             logger.error(f"Error decoding JSON: {e}")
                     await asyncio.sleep(1)
@@ -98,6 +109,7 @@ async def process_message(record, db: Postgres):
         logger.info(f"Processing message: {record}")
         user_id = record["user_id"]
         content = record["content"]
+        message_id = record["id"]
 
         # Проверка состояния пользователя
         user_state = await redis_client.get_user_state(str(user_id))
@@ -163,6 +175,7 @@ async def process_message(record, db: Postgres):
             await redis_client.set_user_state(
                 str(user_id), "awaiting_response"
             )
+
         else:
             # Если состояние уже существует, то обрабатываем сообщение от пользователя
             logger.info(
@@ -185,7 +198,6 @@ async def process_message(record, db: Postgres):
                 {
                     "user_id": uuid.UUID(user_id),
                     "content": gpt_response_json,
-                    "created_at": get_current_time_in_almaty_naive(),
                     "is_created_by_user": False,
                 },
                 Message,
@@ -311,9 +323,16 @@ async def process_message(record, db: Postgres):
                 except Exception as e:
                     logger.error(f"Error saving response to database: {e}")
 
-                # После получения финального ответа от GPT, удаляем состояние пользователя из Redis
                 finally:
-                    await clear_user_state(user_id)
+
+                    await asyncio.sleep(5)
+                    processed_message_ids = (
+                        await redis_client.get_processed_messages(user_id)
+                    )
+                    # await redis_client.mark_message_as_processed(
+                    #     user_id, message_id
+                    # )
+                    await clear_user_state(user_id, processed_message_ids)
                     logger.info(
                         f"User state and thread information cleared for user {user_id}"
                     )
@@ -322,7 +341,13 @@ async def process_message(record, db: Postgres):
         logger.error(f"Error processing message: {e}")
 
 
-async def clear_user_state(user_id):
+async def clear_user_state(user_id, processed_message_ids):
     await redis_client.delete_user_state(user_id)
     await redis_client.delete_thread_id(user_id)
     await redis_client.delete_assistant_id(user_id)
+    await redis_client.delete_processed_messages(
+        user_id, processed_message_ids
+    )
+    logger.info(
+        f"User state and thread information cleared for user {user_id}"
+    )
