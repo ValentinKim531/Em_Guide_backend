@@ -325,13 +325,13 @@ async def process_message(record, db: Postgres):
 
                 finally:
 
-                    await asyncio.sleep(5)
+                    await redis_client.mark_message_as_processed(
+                        user_id, message_id
+                    )
+                    await asyncio.sleep(2)
                     processed_message_ids = (
                         await redis_client.get_processed_messages(user_id)
                     )
-                    # await redis_client.mark_message_as_processed(
-                    #     user_id, message_id
-                    # )
                     await clear_user_state(user_id, processed_message_ids)
                     logger.info(
                         f"User state and thread information cleared for user {user_id}"
