@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Boolean,
     Uuid,
+    func,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
@@ -146,7 +147,9 @@ class Message(Base):
     id = Column(BigInteger, primary_key=True, index=True)
     user_id = Column(Uuid, index=True)
     content = Column(String)
-    created_at = Column(DateTime)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     is_created_by_user = Column(Boolean, default=True)
 
     def __repr__(self):
