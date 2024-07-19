@@ -2,10 +2,10 @@ FROM python:3.10.2
 
 WORKDIR /app
 
-# Обновление и установка ffmpeg и других необходимых пакетов
+# Обновление и установка ffmpeg, libasound2-dev и других необходимых пакетов
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install -y redis-server
+    apt-get install -y redis-server libasound2-dev ffmpeg
 
 # Копируем и устанавливаем зависимости
 COPY requirements.txt .
