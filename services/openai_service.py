@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from openai import AsyncOpenAI
-
 from utils.config import OPENAI_API_KEY
 
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
@@ -14,7 +13,6 @@ async def get_new_thread_id():
 
 
 async def process_question(question, thread_id=None, assistant_id=None):
-    # Декодируем thread_id и assistant_id из байтовой строки в строку
     if isinstance(thread_id, bytes):
         thread_id = thread_id.decode("utf-8")
     if isinstance(assistant_id, bytes):
@@ -55,13 +53,33 @@ async def process_question(question, thread_id=None, assistant_id=None):
             if assistant_messages:
                 return assistant_messages[0], thread_id, messages
             else:
+                logger.error("Assistant messages list is empty.")
                 return (
-                    "Не удалось получить ответ от ассистента.",
+                    "Не удалось получить ответ от ассистента1.",
                     thread_id,
                     messages,
                 )
         else:
-            return "Не удалось получить ответ от ассистента.", thread_id, run
+            logger.error(f"Run status is not completed: {run.status}")
+            return "Не удалось получить ответ от ассистента2.", thread_id, run
     except Exception as e:
         logger.error(f"Error in process_question: {e}")
         return "Произошла ошибка при обработке вопроса.", thread_id, None
+
+
+async def send_to_gpt(content, thread_id=None, assistant_id=None):
+    if isinstance(thread_id, bytes):
+        thread_id = thread_id.decode("utf-8")
+    if isinstance(assistant_id, bytes):
+        assistant_id = assistant_id.decode("utf-8")
+
+    logger.info(
+        f"Sending content to GPT: {content} with thread_id: {thread_id} and assistant_id: {assistant_id}"
+    )
+    response_text, new_thread_id, full_response = await process_question(
+        content, thread_id, assistant_id
+    )
+    logger.info(
+        f"Received response from GPT: {response_text} with new_thread_id: {new_thread_id}"
+    )
+    return response_text, new_thread_id, full_response

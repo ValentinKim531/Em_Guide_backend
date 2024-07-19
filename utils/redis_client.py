@@ -1,7 +1,6 @@
 import aioredis
-from utils.config import REDIS_URL
 import logging
-import asyncio
+from utils.config import REDIS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +31,16 @@ async def save_assistant_id(user_id, assistant_id):
     await redis.set(f"assistant_id:{user_id}", assistant_id)
 
 
-def delete_user_state(user_id):
-    return redis.delete(f"user_state:{user_id}")
+async def delete_user_state(user_id):
+    return await redis.delete(f"user_state:{user_id}")
 
 
-def delete_thread_id(user_id):
-    return redis.delete(f"thread_id:{user_id}")
+async def delete_thread_id(user_id):
+    return await redis.delete(f"thread_id:{user_id}")
 
 
-def delete_assistant_id(user_id):
-    return redis.delete(f"assistant_id:{user_id}")
+async def delete_assistant_id(user_id):
+    return await redis.delete(f"assistant_id:{user_id}")
 
 
 async def is_message_processed(message_id):
@@ -79,3 +78,13 @@ async def delete_processed_messages(user_id, message_ids):
         logger.error(
             f"Error deleting processed messages for user {user_id}: {e}"
         )
+
+
+async def clear_user_state(user_id, processed_message_ids):
+    await delete_user_state(user_id)
+    await delete_thread_id(user_id)
+    await delete_assistant_id(user_id)
+    await delete_processed_messages(user_id, processed_message_ids)
+    logger.info(
+        f"User state and thread information cleared for user {user_id}"
+    )

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from handlers.process_message import process_message, subscribe_to_messages
 from crud import Postgres
 from services.database import async_session
+from services.yandex_service import get_iam_token, refresh_iam_token
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +33,11 @@ class Message(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     logger.info("Supabase startup_event.")
+
+    get_iam_token()
+    task = asyncio.create_task(refresh_iam_token())
+    _ = task
+
     asyncio.ensure_future(subscribe_to_messages(db))
 
 

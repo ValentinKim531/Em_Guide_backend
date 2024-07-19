@@ -14,3 +14,6 @@ ASSISTANT_ID = os.getenv("ASSISTANT_ID")
 ASSISTANT2_ID = os.getenv("ASSISTANT2_ID")
 
 REDIS_URL = os.getenv("REDIS_URL", default="")
+
+YANDEX_OAUTH_TOKEN = os.getenv("YANDEX_OAUTH_TOKEN")
+YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
