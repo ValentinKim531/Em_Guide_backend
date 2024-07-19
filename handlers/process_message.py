@@ -215,7 +215,7 @@ async def save_response_to_db(user_id, response_text, db, is_audio=False):
         Message,
     )
     logger.info(
-        f"Response saved to database: {gpt_response_json} for user {user_id}"
+        f"Response saved to database: gpt_response_json for user {user_id}"
     )
 
 
