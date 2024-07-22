@@ -7,7 +7,7 @@ RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y redis-server libasound2-dev ffmpeg
 
-# Копируем requirements.txt и устанавливаем зависимости
+# Копируем и устанавливаем зависимости
 COPY requirements.txt .
 RUN python -m venv /app/venv && \
     /app/venv/bin/pip install --upgrade pip && \
