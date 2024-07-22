@@ -71,7 +71,7 @@ def synthesize_speech(text, lang_code):
     }
     response = requests.post(url, headers=headers, data=data, stream=True)
     if response.status_code == 200:
-        logger.info(f"audio_response_content: {response.content}")
+        logger.info(f"audio_response_content: OK")
         return response.content
     else:
         error_message = f"Failed to synthesize speech, status code: {response.status_code}, response text: {response.text}"
