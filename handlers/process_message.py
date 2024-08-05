@@ -141,6 +141,9 @@ async def process_message(record, db: Postgres):
                 "Здравствуйте", new_thread_id, assistant_id
             )
 
+            # Логирование полного ответа от GPT
+            logger.info(f"Full response from GPT: {full_response}")
+
             # Сохранение ответа GPT в базу данных в формате JSON
             await save_response_to_db(user_id, response_text, db, is_audio)
             logger.info("Message processing completed.")
@@ -159,6 +162,9 @@ async def process_message(record, db: Postgres):
                 text, thread_id, assistant_id
             )
             await redis_client.save_thread_id(str(user_id), new_thread_id)
+
+            # Логирование полного ответа от GPT
+            logger.info(f"Full response from GPT: {full_response}")
 
             # Сохранение ответа GPT в базу данных
             await save_response_to_db(user_id, response_text, db, is_audio)
@@ -180,30 +186,46 @@ async def process_message(record, db: Postgres):
         # Помечаем сообщение как обработанное
         await redis_client.mark_message_as_processed(user_id, message_id)
 
-        # Удаляем состояние пользователя
-        await clear_user_state(user_id, [message_id])
-        logger.info(
-            f"User state and thread information cleared for user {user_id}"
-        )
+        # Удаляем состояние пользователя только после окончательного ответа
+        if await final_response_reached(full_response):
+            await clear_user_state(user_id, [message_id])
+            logger.info(
+                f"User state and thread information cleared for user {user_id} and {[message_id]}"
+            )
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")
 
 
+async def final_response_reached(full_response):
+    """
+    Определяет, является ли текущий ответ финальным, основываясь на содержании полного ответа от GPT.
+    """
+    try:
+        logger.info(f"Checking for final response in: {full_response}")
+
+        # Проход по всем сообщениям в полном ответе
+        for msg in full_response.data:
+            for content in msg.content:
+                text = content.text.value if hasattr(content, "text") else ""
+
+                # Проверка на наличие JSON с маркером окончания
+                if "json" in text:
+                    return True
+        return False
+    except Exception as e:
+        logger.error(f"Error determining final response: {e}")
+        return False
+
+
 async def save_response_to_db(user_id, response_text, db, is_audio=False):
-    if is_audio:
-        audio_response = synthesize_speech(response_text, "ru")
-        audio_response_encoded = base64.b64encode(audio_response).decode(
-            "utf-8"
-        )
-        gpt_response_json = json.dumps(
-            {"text": response_text, "audio": audio_response_encoded},
-            ensure_ascii=False,
-        )
-    else:
-        gpt_response_json = json.dumps(
-            {"text": response_text}, ensure_ascii=False
-        )
+    # Преобразование текста в аудио
+    audio_response = synthesize_speech(response_text, "ru")
+    audio_response_encoded = base64.b64encode(audio_response).decode("utf-8")
+    gpt_response_json = json.dumps(
+        {"text": response_text, "audio": audio_response_encoded},
+        ensure_ascii=False,
+    )
 
     logger.info(f"Saving GPT response to the database for user {user_id}")
     await db.add_entity(
@@ -225,8 +247,13 @@ async def parse_and_save_json_response(
     try:
         final_response_json = None
         for msg in full_response.data:
-            if "json" in msg.content[0].text.value:
-                final_response_json = msg.content[0].text.value
+            for content in msg.content:
+                text = content.text.value if hasattr(content, "text") else ""
+                if "json" in text:
+                    final_response_json = text
+                    break
+            if final_response_json:
+                break
 
         if final_response_json:
             logger.info(
@@ -247,10 +274,7 @@ async def parse_and_save_json_response(
                 if isinstance(assistant_id, bytes):
                     assistant_id = assistant_id.decode("utf-8")
 
-                if (
-                    "birthdate" in response_data
-                    and response_data["birthdate"] is not None
-                ):
+                if "birthdate" in response_data and response_data["birthdate"]:
                     try:
                         birthdate_str = response_data["birthdate"]
                         birthdate = datetime.strptime(
@@ -262,7 +286,7 @@ async def parse_and_save_json_response(
 
                 if (
                     "reminder_time" in response_data
-                    and response_data["reminder_time"] is not None
+                    and response_data["reminder_time"]
                 ):
                     try:
                         reminder_time_str = response_data["reminder_time"]
@@ -293,7 +317,7 @@ async def parse_and_save_json_response(
                             logger.error(f"Error updating {parameter}: {e}")
                 else:
                     try:
-                        if response_data["pain_intensity"]:
+                        if response_data.get("pain_intensity") is not None:
                             response_data["pain_intensity"] = int(
                                 response_data["pain_intensity"]
                             )

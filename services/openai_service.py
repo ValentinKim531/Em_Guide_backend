@@ -80,6 +80,6 @@ async def send_to_gpt(content, thread_id=None, assistant_id=None):
         content, thread_id, assistant_id
     )
     logger.info(
-        f"Received response from GPT: {response_text} with new_thread_id: {new_thread_id}"
+        f"Received response from GPT: {response_text} with new_thread_id: {new_thread_id} and full_response: {full_response}"
     )
     return response_text, new_thread_id, full_response
