@@ -59,6 +59,11 @@ def synthesize_speech(text, lang_code):
     settings = voice_settings.get(lang_code, voice_settings["ru"])
     url = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize"
     headers = {"Authorization": f"Bearer {YANDEX_IAM_TOKEN}"}
+
+    # Кодирование текста в UTF-8
+    if isinstance(text, str):
+        text = text.encode("utf-8")
+
     data = {
         "text": text,
         "lang": settings["lang"],
