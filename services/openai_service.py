@@ -1,6 +1,8 @@
 import asyncio
 import logging
 from openai import AsyncOpenAI
+
+from services.yandex_service import translate_text
 from utils.config import OPENAI_API_KEY
 
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
@@ -67,18 +69,24 @@ async def process_question(question, thread_id=None, assistant_id=None):
         return "Произошла ошибка при обработке вопроса.", thread_id, None
 
 
-async def send_to_gpt(content, thread_id=None, assistant_id=None):
+async def send_to_gpt(
+    content, thread_id=None, assistant_id=None, target_language="ru"
+):
     if isinstance(thread_id, bytes):
         thread_id = thread_id.decode("utf-8")
     if isinstance(assistant_id, bytes):
         assistant_id = assistant_id.decode("utf-8")
 
-    logger.info(
-        f"Sending content to GPT: {content} with thread_id: {thread_id} and assistant_id: {assistant_id}"
-    )
     response_text, new_thread_id, full_response = await process_question(
         content, thread_id, assistant_id
     )
+
+    # Перевод ответа на целевой язык, если это необходимо
+    if target_language == "kk":
+        response_text = translate_text(
+            response_text, source_lang="ru", target_lang="kk"
+        )
+
     logger.info(
         f"Received response from GPT: {response_text} with new_thread_id: {new_thread_id} and full_response: {full_response}"
     )

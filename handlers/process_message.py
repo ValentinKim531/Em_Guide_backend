@@ -1,12 +1,16 @@
 import base64
 import json
-import asyncio
 import logging
 from datetime import datetime
 from supabase import create_client, Client
-from websockets import connect, WebSocketException
+from handlers.meta import get_user_language, validate_json_format
 from services.openai_service import get_new_thread_id, send_to_gpt
-from services.yandex_service import recognize_speech, synthesize_speech
+from services.statistics_service import generate_statistics_file
+from services.yandex_service import (
+    recognize_speech,
+    synthesize_speech,
+    translate_text,
+)
 from utils import get_current_time_in_almaty_naive, redis_client
 from utils.config import SUPABASE_URL, SUPABASE_KEY
 from models import User, Message, Survey
@@ -19,9 +23,6 @@ from utils.redis_client import clear_user_state
 # Инициализация логирования
 logging.basicConfig(level=logging.INFO)
 
-# Настройка уровня логирования для SQLAlchemy
-logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-
 # Логирование
 logger = logging.getLogger(__name__)
 
@@ -29,105 +30,81 @@ logger = logging.getLogger(__name__)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-async def subscribe_to_messages(db: Postgres):
-    logger.info("Starting subscribe_to_messages loop.")
-    while True:
-        try:
-            ws_url = (
-                SUPABASE_URL.replace("https", "wss")
-                + "/realtime/v1/websocket?apikey="
-                + SUPABASE_KEY
-            )
-            logger.info(f"Connecting to {ws_url}")
-            async with connect(
-                ws_url,
-                extra_headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
-            ) as websocket:
-                logger.info("WebSocket connection established.")
-                subscription_payload = {
-                    "event": "phx_join",
-                    "topic": "realtime:public:messages",
-                    "payload": {},
-                    "ref": 1,
-                }
-                await websocket.send(json.dumps(subscription_payload))
-                logger.info("Subscribed to Supabase websocket.")
-                while True:
-                    result = await websocket.recv()
-                    logger.info(f"Received message: {result}")
-                    if result:
-                        try:
-                            message = json.loads(result)
-                            if message.get("event") == "INSERT":
-                                record = message["payload"]["record"]
-                                if record["is_created_by_user"]:
-                                    logger.info(
-                                        f"Processing new message: {record}"
-                                    )
-                                    # Проверка, если сообщение уже обработано
-                                    if not await redis_client.is_message_processed(
-                                        record["id"]
-                                    ):
-                                        await process_message(record, db)
-                                        await redis_client.mark_message_as_processed(
-                                            record["user_id"], record["id"]
-                                        )
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Error decoding JSON: {e}")
-                    await asyncio.sleep(1)
-        except WebSocketException as e:
-            logger.error(f"WebSocket connection error: {e}. Reconnecting...")
-        except Exception as e:
-            logger.error(f"Unexpected error: {e}. Reconnecting...")
-        await asyncio.sleep(5)  # ждем перед переподключением
-
-
 async def process_message(record, db: Postgres):
     try:
-        logger.info(f"Processing message: {record}")
         user_id = record["user_id"]
         content = record["content"]
-        message_id = record["id"]
+        message_id = record["user_id"]
 
-        # Проверка типа сообщения: текст или аудио
-        is_audio = False
-        if "audio" in content:
-            is_audio = True
-            audio_content_encoded = json.loads(content)["audio"]
+        logger.info(
+            f"Processing message for user_id: {user_id}, content: {content}"
+        )
+
+        if not validate_json_format(content):
+            logger.error(f"Invalid JSON format: {content}")
+            return
+
+        message_data = json.loads(content)
+        logger.info(f"Decoded message data: {message_data}")
+
+        message_language = message_data.get("language")
+
+        if "menu" in message_data and message_data["menu"] == "statistics":
+            statistics_json, excel_file_path = await generate_statistics_file(
+                user_id, db
+            )
+            response = {
+                "menu": "statistics",
+                "statisticsFile": statistics_json,
+                "excelFilePath": excel_file_path,
+            }
+            await save_response_to_db(user_id, json.dumps(response), db)
+            logger.info(f"Statistics sent for user {user_id}")
+            return response
+
+        user_language = await get_user_language(user_id, message_language, db)
+
+        is_audio = "audio" in message_data
+        if is_audio:
+            audio_content_encoded = message_data["audio"]
             audio_content = base64.b64decode(audio_content_encoded)
-            text = recognize_speech(audio_content)
-            if text is None:
-                response_text = "К сожалению, я не смог распознать ваш голос. Пожалуйста, повторите свой запрос."
-                await save_response_to_db(user_id, response_text, db)
-                return
+            text = recognize_speech(
+                audio_content,
+                lang="kk-KK" if user_language == "kk" else "ru-RU",
+            )
+            if user_language == "kk" and text:
+                text = translate_text(text, source_lang="kk", target_lang="ru")
         else:
-            text = content
+            text = message_data["text"]
+            if user_language == "kk":
+                text = translate_text(text, source_lang="kk", target_lang="ru")
 
-        # Проверка состояния пользователя
+        if text is None:
+            response_text = "К сожалению, я не смог распознать ваш голос. Пожалуйста, повторите свой запрос."
+            await save_response_to_db(user_id, response_text, db)
+            logger.info("Text is None, saved response to DB and returning.")
+            return response_text
+
         user_state = await redis_client.get_user_state(str(user_id))
         logger.info(f"Retrieved state {user_state} for user_id {user_id}")
 
         if user_state is None:
-            # Проверка существования пользователя в базе данных
             logger.info(f"Checking if user {user_id} exists in the database")
             user = await db.get_entity_parameter(
                 User, {"userid": str(user_id)}, None
             )
-            if user:
-                logger.info(f"User {user_id} found: {user}")
-                assistant_id = ASSISTANT_ID
-            else:
-                logger.info(f"User {user_id} not found, registering new user.")
+            if not user:
                 new_user_data = {
-                    "userid": uuid.UUID(user_id),
+                    "userid": str(user_id),
+                    "language": user_language,
                     "created_at": get_current_time_in_almaty_naive(),
                     "updated_at": get_current_time_in_almaty_naive(),
                 }
                 await db.add_entity(new_user_data, User)
                 logger.info(f"New user {user_id} registered in the database")
-                assistant_id = ASSISTANT2_ID
 
-            # Создание нового thread_id для диалога
+            assistant_id = ASSISTANT2_ID if not user else ASSISTANT_ID
+
             new_thread_id = await get_new_thread_id()
             await redis_client.save_thread_id(str(user_id), new_thread_id)
             await redis_client.save_assistant_id(str(user_id), assistant_id)
@@ -135,24 +112,27 @@ async def process_message(record, db: Postgres):
                 f"Generated and saved new thread_id {new_thread_id} for user {user_id}"
             )
 
-            # Отправка сообщения в GPT для новой регистрации или ежедневного опроса
             logger.info(f"Sending initial message to GPT for user {user_id}")
             response_text, new_thread_id, full_response = await send_to_gpt(
                 "Здравствуйте", new_thread_id, assistant_id
             )
 
-            # Логирование полного ответа от GPT
-            logger.info(f"Full response from GPT: {full_response}")
+            if user_language == "kk":
+                response_text = translate_text(
+                    response_text, source_lang="ru", target_lang="kk"
+                )
 
-            # Сохранение ответа GPT в базу данных в формате JSON
+            if not response_text:
+                logger.error("Initial response text is empty.")
+                return
+
             await save_response_to_db(user_id, response_text, db, is_audio)
-            logger.info("Message processing completed.")
+            logger.info("Message processing completed1.")
             await redis_client.set_user_state(
                 str(user_id), "awaiting_response"
             )
 
         else:
-            # Если состояние уже существует, то обрабатываем сообщение от пользователя
             logger.info(
                 f"User {user_id} sent a message, forwarding content to GPT."
             )
@@ -163,35 +143,40 @@ async def process_message(record, db: Postgres):
             )
             await redis_client.save_thread_id(str(user_id), new_thread_id)
 
-            # Логирование полного ответа от GPT
-            logger.info(f"Full response from GPT: {full_response}")
+            if user_language == "kk":
+                response_text = translate_text(
+                    response_text, source_lang="ru", target_lang="kk"
+                )
 
-            # Сохранение ответа GPT в базу данных
+            if not response_text:
+                logger.error("Response text is empty.")
+                return
+
             await save_response_to_db(user_id, response_text, db, is_audio)
-            logger.info("Message processing completed.")
+            logger.info("Message processing completed2.")
             await redis_client.set_user_state(
                 str(user_id), "response_received"
             )
 
-            # Преобразование текста ответа GPT в аудио, если сообщение было аудио
             if is_audio:
-                audio_response = synthesize_speech(response_text, "ru")
-                await save_response_to_db(user_id, audio_response, db)
+                audio_response = synthesize_speech(
+                    response_text, user_language
+                )
+                if audio_response:
+                    await save_response_to_db(user_id, audio_response, db)
+                else:
+                    logger.error("Audio response is empty.")
 
-            # Парсинг JSON ответа и сохранение в соответствующие таблицы
             await parse_and_save_json_response(
                 user_id, full_response, db, assistant_id
             )
+            logger.info(f"response_text in process message : {response_text}")
 
-        # Помечаем сообщение как обработанное
         await redis_client.mark_message_as_processed(user_id, message_id)
-
-        # Удаляем состояние пользователя только после окончательного ответа
         if await final_response_reached(full_response):
             await clear_user_state(user_id, [message_id])
-            logger.info(
-                f"User state and thread information cleared for user {user_id} and {[message_id]}"
-            )
+
+        return response_text
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")
@@ -202,8 +187,6 @@ async def final_response_reached(full_response):
     Определяет, является ли текущий ответ финальным, основываясь на содержании полного ответа от GPT.
     """
     try:
-        logger.info(f"Checking for final response in: {full_response}")
-
         # Проход по всем сообщениям в полном ответе
         for msg in full_response.data:
             for content in msg.content:
@@ -219,26 +202,41 @@ async def final_response_reached(full_response):
 
 
 async def save_response_to_db(user_id, response_text, db, is_audio=False):
-    # Преобразование текста в аудио
-    audio_response = synthesize_speech(response_text, "ru")
-    audio_response_encoded = base64.b64encode(audio_response).decode("utf-8")
-    gpt_response_json = json.dumps(
-        {"text": response_text, "audio": audio_response_encoded},
-        ensure_ascii=False,
-    )
+    try:
+        if response_text:
+            logger.info(f"Response text before synthesis: {response_text}")
+            audio_response = synthesize_speech(response_text, "ru")
+            if audio_response:
+                audio_response_encoded = base64.b64encode(
+                    audio_response
+                ).decode("utf-8")
+                gpt_response_json = json.dumps(
+                    {"text": response_text, "audio": audio_response_encoded},
+                    ensure_ascii=False,
+                )
 
-    logger.info(f"Saving GPT response to the database for user {user_id}")
-    await db.add_entity(
-        {
-            "user_id": uuid.UUID(user_id),
-            "content": gpt_response_json,
-            "is_created_by_user": False,
-        },
-        Message,
-    )
-    logger.info(
-        f"Response saved to database: gpt_response_json for user {user_id}"
-    )
+                logger.info(
+                    f"Saving GPT response to the database for user {user_id}"
+                )
+                await db.add_entity(
+                    {
+                        "user_id": str(
+                            user_id
+                        ),  # Преобразование UUID в строку
+                        "content": gpt_response_json,
+                        "is_created_by_user": False,
+                    },
+                    Message,
+                )
+                logger.info(f"Response saved to database: for user {user_id}")
+            else:
+                logger.error(
+                    f"Audio response is None for text: {response_text}"
+                )
+        else:
+            logger.error("Response text is empty, cannot save to database.")
+    except Exception as e:
+        logger.error(f"Error in save_response_to_db: {e}")
 
 
 async def parse_and_save_json_response(
@@ -300,40 +298,44 @@ async def parse_and_save_json_response(
                     except ValueError as e:
                         logger.error(f"Error parsing reminder_time: {e}")
 
+                # Updating user data in the database
                 if assistant_id == ASSISTANT2_ID:
                     for parameter, value in response_data.items():
-                        try:
-                            logger.info(
-                                f"Updating {parameter} with value {value} for user {response_data['userid']}"
-                            )
-                            await db.update_entity_parameter(
-                                entity_id=response_data["userid"],
-                                parameter=parameter,
-                                value=value,
-                                model_class=User,
-                            )
-                            logger.info(f"Updated {parameter} successfully")
-                        except Exception as e:
-                            logger.error(f"Error updating {parameter}: {e}")
+                        if parameter != "userid":
+                            try:
+                                logger.info(
+                                    f"Updating {parameter} with value {value} for user {response_data['userid']}"
+                                )
+                                await db.update_entity_parameter(
+                                    entity_id=response_data["userid"],
+                                    parameter=parameter,
+                                    value=value,
+                                    model_class=User,
+                                )
+                                logger.info(
+                                    f"Updated {parameter} successfully"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Error updating {parameter}: {e}"
+                                )
                 else:
                     try:
-                        if response_data.get("pain_intensity") is not None:
-                            response_data["pain_intensity"] = int(
-                                response_data["pain_intensity"]
-                            )
-                        else:
-                            response_data["pain_intensity"] = 0
-                        logger.info(
-                            f"pain_intensity: {response_data['pain_intensity']}"
-                        )
-
-                        response_data["userid"] = uuid.UUID(user_id)
                         response_data["created_at"] = (
                             get_current_time_in_almaty_naive()
                         )
                         response_data["updated_at"] = (
                             get_current_time_in_almaty_naive()
                         )
+                        if response_data["pain_intensity"] is not None:
+                            response_data["pain_intensity"] = int(
+                                response_data["pain_intensity"]
+                            )
+                        else:
+                            response_data["pain_intensity"] = 0
+                            logger.info(
+                                f"pain_intensity: {response_data['pain_intensity']}"
+                            )
                         await db.add_entity(response_data, Survey)
                         logger.info(
                             f"Survey response saved for user {user_id}"

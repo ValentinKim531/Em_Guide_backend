@@ -1,5 +1,7 @@
+# Используем официальный образ Python в качестве базового
 FROM python:3.10.2
 
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
 # Обновление и установка ffmpeg, libasound2-dev и других необходимых пакетов
@@ -16,5 +18,8 @@ RUN python -m venv /app/venv && \
 # Копируем весь проект
 COPY . .
 
+# Открываем порты для FastAPI и WebSocket сервера
+EXPOSE 8000
+
 # Запуск Redis и приложения
-CMD service redis-server start && /app/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+CMD service redis-server start && /app/venv/bin/python main.py

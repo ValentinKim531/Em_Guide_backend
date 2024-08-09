@@ -1,6 +1,10 @@
+import logging
 from typing import Optional, Union, Any, Type
 from sqlalchemy.future import select
 from models.models import Database, Base
+
+
+logger = logging.getLogger(__name__)
 
 
 class Postgres(Database):
@@ -61,6 +65,10 @@ class Postgres(Database):
             if entity:
                 setattr(entity, parameter, value)
                 await session.commit()
+            else:
+                logger.error(
+                    f"Entity with id {entity_id} not found in {model_class.__name__}"
+                )
 
     async def delete_entity(
         self, entity_id: int, model_class: type[Base]

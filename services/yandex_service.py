@@ -52,54 +52,57 @@ def recognize_speech(audio_content, lang="ru-RU"):
 
 
 def synthesize_speech(text, lang_code):
-    voice_settings = {
-        "ru": {"lang": "ru-RU", "voice": "jane", "emotion": "good"},
-        "kk": {"lang": "kk-KK", "voice": "amira", "emotion": "neutral"},
-    }
-    settings = voice_settings.get(lang_code, voice_settings["ru"])
-    url = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize"
-    headers = {"Authorization": f"Bearer {YANDEX_IAM_TOKEN}"}
+    try:
+        logger.info(
+            f"Starting synthesis for text: '{text}' with lang_code: '{lang_code}'"
+        )
+        voice_settings = {
+            "ru": {"lang": "ru-RU", "voice": "jane", "emotion": "good"},
+            "kk": {"lang": "kk-KK", "voice": "amira", "emotion": "neutral"},
+        }
+        settings = voice_settings.get(lang_code, voice_settings["ru"])
+        url = "https://tts.api.cloud.yandex.net/speech/v1/tts:synthesize"
+        headers = {"Authorization": f"Bearer {YANDEX_IAM_TOKEN}"}
 
-    # Кодирование текста в UTF-8
-    if isinstance(text, str):
-        text = text.encode("utf-8")
+        data = {
+            "text": text,
+            "lang": settings["lang"],
+            "voice": settings["voice"],
+            "emotion": settings["emotion"],
+            "folderId": YANDEX_FOLDER_ID,
+            "format": "mp3",
+            "sampleRateHertz": 48000,
+            "speed": "1.2",
+        }
+        response = requests.post(url, headers=headers, data=data, stream=True)
+        if response.status_code == 200:
+            logger.info(f"Audio response content: OK for text: '{text}'")
+            return response.content
+        else:
+            error_message = f"Failed to synthesize speech, status code: {response.status_code}, response text: {response.text}"
+            logger.error(error_message)
+            raise Exception(error_message)
+    except Exception as e:
+        logger.error(f"Exception in synthesize_speech: {e}")
+        return None
 
-    data = {
-        "text": text,
-        "lang": settings["lang"],
-        "voice": settings["voice"],
-        "emotion": settings["emotion"],
-        "folderId": YANDEX_FOLDER_ID,
-        "format": "mp3",
-        "sampleRateHertz": 48000,
-        "speed": "1.2",
+
+def translate_text(text, source_lang="ru", target_lang="kk"):
+    url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
+    headers = {
+        "Authorization": f"Bearer {YANDEX_IAM_TOKEN}",
+        "Content-Type": "application/json",
     }
-    response = requests.post(url, headers=headers, data=data, stream=True)
-    if response.status_code == 200:
-        logger.info(f"audio_response_content: OK")
-        return response.content
+    payload = {
+        "folder_id": YANDEX_FOLDER_ID,
+        "texts": [text],
+        "targetLanguageCode": target_lang,
+        "sourceLanguageCode": source_lang,
+    }
+    response = requests.post(url, json=payload, headers=headers)
+    response.raise_for_status()
+    translations = response.json().get("translations", [])
+    if translations:
+        return translations[0]["text"]
     else:
-        error_message = f"Failed to synthesize speech, status code: {response.status_code}, response text: {response.text}"
-        logger.error(error_message)
-        raise Exception(error_message)
-
-
-# def translate_text(text, source_lang="ru", target_lang="kk"):
-#     url = "https://translate.api.cloud.yandex.net/translate/v2/translate"
-#     headers = {
-#         "Authorization": f"Bearer {YANDEX_IAM_TOKEN}",
-#         "Content-Type": "application/json",
-#     }
-#     payload = {
-#         "folder_id": YANDEX_FOLDER_ID,
-#         "texts": [text],
-#         "targetLanguageCode": target_lang,
-#         "sourceLanguageCode": source_lang,
-#     }
-#     response = requests.post(url, json=payload, headers=headers)
-#     response.raise_for_status()
-#     translations = response.json().get("translations", [])
-#     if translations:
-#         return translations[0]["text"]
-#     else:
-#         return "Перевод не найден."
+        return "Перевод не найден."
