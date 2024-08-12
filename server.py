@@ -2,10 +2,9 @@ import asyncio
 import websockets
 import json
 from crud import Postgres
-from sqlalchemy.ext.asyncio import AsyncSession
 from models import Message
 from services.database import async_session
-from handlers.process_message import process_message, save_response_to_db
+from handlers.process_message import process_message
 import uuid
 import logging
 
@@ -36,8 +35,7 @@ async def handle_connection(websocket, path):
             # Обработка сообщения
             response_text = await process_message(message_data, db)
 
-            # Отправка ответа клиенту
-            response = {"text": response_text, "is_created_by_user": False}
+            response = {"content": {"text": response_text}, "is_created_by_user": False}
             logger.info(f"response text: {response_text}")
             await websocket.send(json.dumps(response, ensure_ascii=False))
         except Exception as e:
