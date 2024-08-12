@@ -29,7 +29,7 @@ class User(Base):
 
     __tablename__ = "users"
 
-    userid = Column(Uuid, primary_key=True)
+    userid = Column(String, primary_key=True)
     username = Column(String)
     firstname = Column(String)
     lastname = Column(String)
@@ -96,7 +96,7 @@ class Survey(Base):
 
     survey_id = Column(Integer, primary_key=True, autoincrement=True)
     userid = Column(
-        Uuid,
+        String,
         ForeignKey("users.userid", ondelete="CASCADE"),
         primary_key=True,
     )
@@ -145,7 +145,7 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    user_id = Column(Uuid, index=True)
+    user_id = Column(String, index=True)
     content = Column(String)
     created_at = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -220,9 +220,7 @@ async def save_response_to_db(user_id, response_text, db, is_audio=False):
                 )
                 await db.add_entity(
                     {
-                        "user_id": str(
-                            user_id
-                        ),  # Преобразование UUID в строку
+                        "user_id": str(user_id),
                         "content": gpt_response_json,
                         "is_created_by_user": False,
                     },
@@ -265,7 +263,7 @@ async def parse_and_save_json_response(
                 ].strip()
                 response_data = json.loads(response_data_str)
 
-                response_data["userid"] = uuid.UUID(user_id)
+                response_data["userid"] = str(user_id)
                 logger.info(f"userid: {response_data['userid']}")
                 logger.info(f"response_data: {response_data}")
 
@@ -275,9 +273,14 @@ async def parse_and_save_json_response(
                 if "birthdate" in response_data and response_data["birthdate"]:
                     try:
                         birthdate_str = response_data["birthdate"]
-                        birthdate = datetime.strptime(
-                            birthdate_str, "%d %B %Y"
-                        ).date()
+                        try:
+                            birthdate = datetime.strptime(
+                                birthdate_str, "%d.%m.%Y"
+                            ).date()
+                        except ValueError:
+                            birthdate = datetime.strptime(
+                                birthdate_str, "%d %B %Y"
+                            ).date()
                         response_data["birthdate"] = birthdate
                     except ValueError as e:
                         logger.error(f"Error parsing birthdate: {e}")
@@ -301,7 +304,7 @@ async def parse_and_save_json_response(
                 # Updating user data in the database
                 if assistant_id == ASSISTANT2_ID:
                     for parameter, value in response_data.items():
-                        if parameter != "userid":
+                        if parameter != "userid" and value:
                             try:
                                 logger.info(
                                     f"Updating {parameter} with value {value} for user {response_data['userid']}"
