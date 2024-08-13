@@ -303,25 +303,45 @@ async def parse_and_save_json_response(
 
                 # Updating user data in the database
                 if assistant_id == ASSISTANT2_ID:
-                    for parameter, value in response_data.items():
-                        if parameter != "userid" and value:
-                            try:
-                                logger.info(
-                                    f"Updating {parameter} with value {value} for user {response_data['userid']}"
-                                )
-                                await db.update_entity_parameter(
-                                    entity_id=response_data["userid"],
-                                    parameter=parameter,
-                                    value=value,
-                                    model_class=User,
-                                )
-                                logger.info(
-                                    f"Updated {parameter} successfully"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Error updating {parameter}: {e}"
-                                )
+                    user_exists = await db.get_entity_parameter(
+                        User, {"userid": response_data["userid"]}, None
+                    )
+                    if user_exists:
+                        for parameter, value in response_data.items():
+                            if parameter != "userid" and value:
+                                try:
+                                    logger.info(
+                                        f"Updating {parameter} with value {value} for user {response_data['userid']}"
+                                    )
+                                    await db.update_entity_parameter(
+                                        entity_id=response_data["userid"],
+                                        parameter=parameter,
+                                        value=value,
+                                        model_class=User,
+                                    )
+                                    logger.info(
+                                        f"Updated {parameter} successfully"
+                                    )
+                                except Exception as e:
+                                    logger.error(
+                                        f"Error updating {parameter}: {e}"
+                                    )
+                    else:
+                        try:
+                            response_data["created_at"] = (
+                                get_current_time_in_almaty_naive()
+                            )
+                            response_data["updated_at"] = (
+                                get_current_time_in_almaty_naive()
+                            )
+                            await db.add_entity(response_data, User)
+                            logger.info(
+                                f"New user {response_data['userid']} added to the database"
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error adding new user to database: {e}"
+                            )
                 else:
                     try:
                         response_data["created_at"] = (
