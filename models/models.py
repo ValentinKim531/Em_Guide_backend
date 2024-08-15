@@ -1,3 +1,4 @@
+import uuid
 from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Union, Optional, Type, Any
@@ -14,6 +15,7 @@ from sqlalchemy import (
     Boolean,
     Uuid,
     func,
+    UUID,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
@@ -144,7 +146,9 @@ class Message(Base):
 
     __tablename__ = "messages"
 
-    id = Column(BigInteger, primary_key=True, index=True)
+    id = Column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True
+    )
     user_id = Column(String, index=True)
     content = Column(String)
     created_at = Column(
@@ -164,6 +168,7 @@ class Message(Base):
             self.user_id,
             self.content,
             self.created_at,
+            self.is_created_by_user,
         )
 
 

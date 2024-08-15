@@ -2,10 +2,11 @@ import base64
 import json
 import logging
 from datetime import datetime
+
+import ftfy
 from supabase import create_client, Client
 from handlers.meta import get_user_language, validate_json_format
 from services.openai_service import get_new_thread_id, send_to_gpt
-from services.statistics_service import generate_statistics_file
 from services.yandex_service import (
     recognize_speech,
     synthesize_speech,
@@ -16,7 +17,6 @@ from utils.config import SUPABASE_URL, SUPABASE_KEY
 from models import User, Message, Survey
 from crud import Postgres
 from utils.config import ASSISTANT2_ID, ASSISTANT_ID
-import uuid
 
 from utils.redis_client import clear_user_state
 
@@ -33,36 +33,56 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 async def process_message(record, db: Postgres):
     try:
         user_id = record["user_id"]
+
         content = record["content"]
-        message_id = record["user_id"]
+        content_dict = json.loads(content)
+        logger.info(f"type content data: {type(content_dict)}")
+        logger.info(f"type content data: {content_dict}")
+        # logger.info(f"content111: {content_str}")
+        #
+        # # Замена одинарных слешей на двойные
+        # content_str_escaped = content_str.replace("\\", "\\\\")
+        # logger.info(f"Escaped content string: {content_str_escaped}")
+        #
+        # # Попытка декодирования Unicode escape-последовательностей
+        # try:
+        #     # Использование unicode-escape
+        #     decoded_content_str = (
+        #         content_str_escaped.encode("latin1")
+        #         .decode("unicode-escape")
+        #         .encode("latin1")
+        #         .decode("utf-8")
+        #     )
+        #     logger.info(f"Decoded content string: {decoded_content_str}")
+        #
+        #     # Преобразование обратно в JSON
+        #     content = json.loads(decoded_content_str)
+        #     logger.info(f"Decoded message data: {content}")
+        # except UnicodeDecodeError as e:
+        #     logger.error(f"Error decoding content string: {e}")
+        #     return {
+        #         "type": "response",
+        #         "status": "error",
+        #         "error": "invalid_request",
+        #         "message": f"Error decoding the content string: {e}",
+        #     }
 
-        logger.info(
-            f"Processing message for user_id: {user_id}, content: {content}"
-        )
-
-        if not validate_json_format(content):
+        if not validate_json_format(json.dumps(content)):
             logger.error(f"Invalid JSON format: {content}")
-            return
-
-        message_data = json.loads(content)
-        logger.info(f"Decoded message data: {message_data}")
-
-        message_language = message_data.get("language")
-
-        if "menu" in message_data and message_data["menu"] == "statistics":
-            statistics_json, excel_file_path = await generate_statistics_file(
-                user_id, db
-            )
-            response = {
-                "menu": "statistics",
-                "statisticsFile": statistics_json,
-                "excelFilePath": excel_file_path,
+            return {
+                "type": "response",
+                "status": "error",
+                "error": "invalid_request",
+                "message": "Invalid JSON format",
             }
-            await save_response_to_db(user_id, json.dumps(response), db)
-            logger.info(f"Statistics sent for user {user_id}")
-            return response
 
-        user_language = await get_user_language(user_id, message_language, db)
+        message_data = content_dict
+        logger.info(f"Decoded message data: {message_data}")
+        logger.info(f"type message data: {type(message_data)}")
+
+        user_language = await get_user_language(
+            user_id, message_data.get("language"), db
+        )
 
         is_audio = "audio" in message_data
         if is_audio:
@@ -83,7 +103,13 @@ async def process_message(record, db: Postgres):
             response_text = "К сожалению, я не смог распознать ваш голос. Пожалуйста, повторите свой запрос."
             await save_response_to_db(user_id, response_text, db)
             logger.info("Text is None, saved response to DB and returning.")
-            return response_text
+            return {
+                "type": "response",
+                "status": "error",
+                "action": "message",
+                "error": "processing_error",
+                "message": response_text,
+            }
 
         user_state = await redis_client.get_user_state(str(user_id))
         logger.info(f"Retrieved state {user_state} for user_id {user_id}")
@@ -124,9 +150,17 @@ async def process_message(record, db: Postgres):
 
             if not response_text:
                 logger.error("Initial response text is empty.")
-                return
+                return {
+                    "type": "response",
+                    "status": "error",
+                    "action": "message",
+                    "error": "processing_error",
+                    "message": "Response text is empty.",
+                }
 
-            await save_response_to_db(user_id, response_text, db, is_audio)
+            message_id = await save_response_to_db(
+                user_id, response_text, db, is_audio
+            )
             logger.info("Message processing completed1.")
             await redis_client.set_user_state(
                 str(user_id), "awaiting_response"
@@ -150,9 +184,17 @@ async def process_message(record, db: Postgres):
 
             if not response_text:
                 logger.error("Response text is empty.")
-                return
+                return {
+                    "type": "response",
+                    "status": "error",
+                    "action": "message",
+                    "error": "processing_error",
+                    "message": "Response text is empty.",
+                }
 
-            await save_response_to_db(user_id, response_text, db, is_audio)
+            message_id = await save_response_to_db(
+                user_id, response_text, db, is_audio
+            )
             logger.info("Message processing completed2.")
             await redis_client.set_user_state(
                 str(user_id), "response_received"
@@ -163,23 +205,33 @@ async def process_message(record, db: Postgres):
                     response_text, user_language
                 )
                 if audio_response:
-                    await save_response_to_db(user_id, audio_response, db)
+                    message_id = await save_response_to_db(
+                        user_id, audio_response, db
+                    )
                 else:
                     logger.error("Audio response is empty.")
 
             await parse_and_save_json_response(
                 user_id, full_response, db, assistant_id
             )
-            logger.info(f"response_text in process message : {response_text}")
+            logger.info(f"response_text in process message: {response_text}")
 
         await redis_client.mark_message_as_processed(user_id, message_id)
         if await final_response_reached(full_response):
             await clear_user_state(user_id, [message_id])
 
-        return response_text
+        logger.info(f"message_id111: {message_id}")
+        return response_text, message_id
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")
+        return {
+            "type": "response",
+            "status": "error",
+            "action": "message",
+            "error": "server_error",
+            "message": "An internal server error occurred.",
+        }
 
 
 async def final_response_reached(full_response):
@@ -210,8 +262,12 @@ async def save_response_to_db(user_id, response_text, db, is_audio=False):
                 audio_response_encoded = base64.b64encode(
                     audio_response
                 ).decode("utf-8")
+                # gpt_response_json = json.dumps(
+                #     {"text": response_text, "audio": audio_response_encoded},
+                #     ensure_ascii=False,
+                # )
                 gpt_response_json = json.dumps(
-                    {"text": response_text, "audio": audio_response_encoded},
+                    {"text": response_text},
                     ensure_ascii=False,
                 )
 
@@ -227,6 +283,14 @@ async def save_response_to_db(user_id, response_text, db, is_audio=False):
                     Message,
                 )
                 logger.info(f"Response saved to database: for user {user_id}")
+
+                message_id = await db.get_entity_parameter(
+                    Message,
+                    {"user_id": str(user_id), "content": gpt_response_json},
+                    "id",
+                )
+                logger.info(f"Message ID retrieved: {message_id}")
+                return str(message_id)
             else:
                 logger.error(
                     f"Audio response is None for text: {response_text}"
@@ -262,7 +326,6 @@ async def parse_and_save_json_response(
                     json_start + len("```json") : json_end
                 ].strip()
                 response_data = json.loads(response_data_str)
-
                 response_data["userid"] = str(user_id)
                 logger.info(f"userid: {response_data['userid']}")
                 logger.info(f"response_data: {response_data}")

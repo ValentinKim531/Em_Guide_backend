@@ -26,29 +26,33 @@ async def refresh_iam_token():
 
 
 def recognize_speech(audio_content, lang="ru-RU"):
-    if not YANDEX_IAM_TOKEN:
-        get_iam_token()
-    url = f"https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?folderId={YANDEX_FOLDER_ID}&lang={lang}"
-    headers = {"Authorization": f"Bearer {YANDEX_IAM_TOKEN}"}
+    try:
+        if not YANDEX_IAM_TOKEN:
+            get_iam_token()
+        url = f"https://stt.api.cloud.yandex.net/speech/v1/stt:recognize?folderId={YANDEX_FOLDER_ID}&lang={lang}"
+        headers = {"Authorization": f"Bearer {YANDEX_IAM_TOKEN}"}
 
-    logger.info(
-        f"Sending request to Yandex STT API with URL: {url} and headers: {headers}"
-    )
-    response = requests.post(url, headers=headers, data=audio_content)
+        logger.info(
+            f"Sending request to Yandex STT API with URL: {url} and headers: {headers}"
+        )
+        response = requests.post(url, headers=headers, data=audio_content)
 
-    if response.status_code == 200:
-        result = response.json().get("result")
-        if not result:
-            logger.info(
-                "Recognition result is empty. Asking user to repeat the question."
-            )
-            return None  # Возвращаем None в случае пустого результата
-        logger.info(f"Recognition result: {result}")
-        return result
-    else:
-        error_message = f"Failed to recognize speech, status code: {response.status_code}, response text: {response.text}"
-        logger.error(error_message)
-        raise Exception(error_message)
+        if response.status_code == 200:
+            result = response.json().get("result")
+            if not result:
+                logger.info(
+                    "Recognition result is empty. Asking user to repeat the question."
+                )
+                return None
+            logger.info(f"Recognition result: {result}")
+            return result
+        else:
+            error_message = f"Failed to recognize speech, status code: {response.status_code}, response text: {response.text}"
+            logger.error(error_message)
+            raise Exception(error_message)
+    except Exception as e:
+        logger.error(f"Error in recognize_speech: {e}")
+        return None
 
 
 def synthesize_speech(text, lang_code):
@@ -99,10 +103,19 @@ def translate_text(text, source_lang="ru", target_lang="kk"):
         "targetLanguageCode": target_lang,
         "sourceLanguageCode": source_lang,
     }
-    response = requests.post(url, json=payload, headers=headers)
-    response.raise_for_status()
-    translations = response.json().get("translations", [])
-    if translations:
-        return translations[0]["text"]
-    else:
-        return "Перевод не найден."
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        translations = response.json().get("translations", [])
+        if translations:
+            return translations[0]["text"]
+        else:
+            logger.error("Translation not found in response")
+            return "Перевод не найден."
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error during translation request: {e}")
+        return "Ошибка при запросе перевода."
+    except Exception as e:
+        logger.error(f"Unexpected error during translation: {e}")
+        return "Произошла неожиданная ошибка."

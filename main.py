@@ -38,26 +38,20 @@ class Message(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Supabase startup_event.")
-    get_iam_token()
-    task = asyncio.create_task(refresh_iam_token())
-    _ = task
-    asyncio.ensure_future(websocket_server())
-
-
-#
-# @app.post("/messages/")
-# async def create_message(
-#     message: Message,
-#     background_tasks: BackgroundTasks,
-#     session: AsyncSession = Depends(get_db),
-# ):
-#     db_instance = Postgres(session)
-#     background_tasks.add_task(process_message, message.dict(), db_instance)
-#     return {"message": "Message received"}
+    try:
+        logger.info("Supabase startup_event.")
+        get_iam_token()
+        task = asyncio.create_task(refresh_iam_token())
+        _ = task
+        asyncio.ensure_future(websocket_server())
+    except Exception as e:
+        logger.error(f"Error during startup event: {e}")
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    except Exception as e:
+        logger.error(f"Error starting FastAPI server: {e}")
