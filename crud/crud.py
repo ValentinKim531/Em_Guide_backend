@@ -70,7 +70,7 @@ class Postgres(Database):
 
     async def update_entity_parameter(
         self,
-        entity_id: Union[int, tuple],
+        entity_id: Union[str, tuple],
         parameter: str,
         value: any,
         model_class: type[Base],
@@ -89,7 +89,7 @@ class Postgres(Database):
             logger.error(f"Error updating entity parameter: {e}")
 
     async def delete_entity(
-        self, entity_id: int, model_class: type[Base]
+        self, entity_id: Union[str, tuple], model_class: type[Base]
     ) -> None:
         try:
             async with self.async_session() as session:

@@ -11,6 +11,9 @@ from handlers.process_message import process_message
 import logging
 import ftfy
 from services.history_service import generate_chat_history
+from services.language_service import change_language
+from services.reminder_service import change_reminder_time
+from services.statistics_service import generate_statistics_file
 
 db = Postgres(async_session)
 logger = logging.getLogger(__name__)
@@ -31,7 +34,7 @@ async def verify_token_with_auth_server(token):
         return None
 
 
-async def handle_command(action, user_id, db):
+async def handle_command(action, user_id, db, data=None):
     if action == "fetch_history":
         try:
             chat_history = await generate_chat_history(user_id, db)
@@ -58,12 +61,93 @@ async def handle_command(action, user_id, db):
                 "error": "server_error",
                 "message": "An internal server error occurred. Please try again later.",
             }
-    # Добавить обработку других команд здесь
+    elif action == "export_stats":
+        try:
+            stats = await generate_statistics_file(user_id, db)
+            if not stats:
+                return {
+                    "type": "response",
+                    "status": "error",
+                    "action": "export_stats",
+                    "error": "no_stats",
+                    "message": "No stats available.",
+                }
+            return {
+                "type": "response",
+                "status": "success",
+                "action": "export_stats",
+                "data": {"file_json": stats},
+            }
+        except Exception as e:
+            logger.error(f"Error generating export stats: {e}")
+            return {
+                "type": "response",
+                "status": "error",
+                "action": "export_stats",
+                "error": "server_error",
+                "message": "An internal server error occurred. Please try again later.",
+            }
+    elif action == "change_reminder_time":
+        try:
+            reminder_time = data.get("data", {}).get("reminder_time")
+            if not reminder_time:
+                return {
+                    "type": "response",
+                    "status": "error",
+                    "action": "change_reminder_time",
+                    "error": "no_reminder_time",
+                    "message": "No reminder_time pointed.",
+                }
+            response = await change_reminder_time(user_id, reminder_time, db)
+            return {
+                "type": "response",
+                "status": "success",
+                "action": "change_reminder_time",
+                "data": {"reminder_time": response},
+            }
+        except Exception as e:
+            logger.error(f"Error updating reminder time: {e}")
+            return {
+                "type": "response",
+                "status": "error",
+                "action": "change_reminder_time",
+                "error": "server_error",
+                "message": "An internal server error occurred. Please try again later.",
+            }
+
+    elif action == "change_language":
+        try:
+            language = data.get("data", {}).get("language")
+            if not language:
+                return {
+                    "type": "response",
+                    "status": "error",
+                    "action": "change_language",
+                    "error": "no_change_language",
+                    "message": "No language pointed.",
+                }
+            response = await change_language(user_id, language, db)
+            return {
+                "type": "response",
+                "status": "success",
+                "action": "change_language",
+                "data": {"language": response},
+            }
+        except Exception as e:
+            logger.error(f"Error updating language: {e}")
+            return {
+                "type": "response",
+                "status": "error",
+                "action": "change_language",
+                "error": "server_error",
+                "message": "An internal server error occurred. Please try again later.",
+            }
+
     return {
         "type": "response",
         "status": "error",
         "error": "invalid_request",
-        "message": "Unknown command.",
+        "message": "The request format is invalid. Please check the data and try again.",
     }
 
 
@@ -89,7 +173,7 @@ async def handle_connection(websocket, path):
             action = data.get("action")
 
             try:
-                content_dict = data.get("data").get("content")
+                content_dict = data.get("data", {}).get("content", {})
                 logger.info(f"Original content dictionary: {content_dict}")
 
                 # Декодирование поля 'text' с помощью ftfy
@@ -115,7 +199,7 @@ async def handle_connection(websocket, path):
                 continue
 
             if message_type == "command":
-                response = await handle_command(action, user_id, db)
+                response = await handle_command(action, user_id, db, data)
                 await websocket.send(json.dumps(response, ensure_ascii=False))
             elif message_type == "system":
                 response = await handle_command(action, user_id, db)
@@ -182,9 +266,7 @@ async def handle_connection(websocket, path):
                         message_data, db
                     )
                     response_from_bot = {
-                        "type": "response",
-                        "status": "success",
-                        "action": "message",
+                        "type": "message",
                         "data": {
                             "id": message_id,
                             "created_at": datetime.now().strftime(

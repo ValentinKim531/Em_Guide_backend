@@ -21,7 +21,7 @@ async def generate_statistics_file(user_id, db: Postgres):
                 "Номер": record.survey_id,
                 "Дата создания": record.created_at.strftime("%Y-%m-%d %H:%M"),
                 "Дата обновления": record.updated_at.strftime(
-                    "%Y-%м-%d %H:%М"
+                    "%Y-%m-%d %H:%М"
                 ),
                 "Головная боль сегодня": record.headache_today,
                 "Принимали ли медикаменты": record.medicament_today,
@@ -40,7 +40,7 @@ async def generate_statistics_file(user_id, db: Postgres):
 
         excel_file_path = await save_json_to_excel(statistics_json)
 
-        return statistics_json, excel_file_path
+        return statistics_json
     except Exception as e:
         logger.error(
             f"Error generating statistics file for user {user_id}: {e}"
