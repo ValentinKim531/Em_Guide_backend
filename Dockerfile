@@ -32,14 +32,13 @@ RUN apt-get update && \
     wget \
     yasm \
     zlib1g-dev \
-    libfdk-aac-dev \
     libx264-dev \
     libx265-dev \
     libnuma-dev \
     libvpx-dev \
     libasound2-dev
 
-# Клонирование и сборка FFmpeg с нужными опциями
+# Клонирование и сборка FFmpeg с поддержкой libfdk-aac
 RUN git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git ffmpeg && \
     cd ffmpeg && \
     ./configure \
