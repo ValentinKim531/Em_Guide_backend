@@ -1,7 +1,6 @@
 import asyncio
+import subprocess
 import tempfile
-
-from pydub import AudioSegment
 import io
 import requests
 import logging
@@ -84,15 +83,32 @@ def synthesize_speech(text, lang_code):
         response = requests.post(url, headers=headers, data=data, stream=True)
         if response.status_code == 200:
             logger.info(f"Audio response content: OK for text: '{text[:100]}'")
+
             # Конвертация в aac
-            audio = AudioSegment.from_file(
-                io.BytesIO(response.content), format="mp3"
+            input_audio = io.BytesIO(response.content)
+            temp_input = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".mp3"
             )
             temp_output = tempfile.NamedTemporaryFile(
                 delete=False, suffix=".aac"
             )
-            audio.export(temp_output.name, format="mp4", codec="aac")
-            temp_output.close()
+            with open(temp_input.name, "wb") as f:
+                f.write(input_audio.read())
+
+            # Использование ffmpeg для конвертации
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    temp_input.name,
+                    "-c:a",
+                    "aac",
+                    temp_output.name,
+                ],
+                check=True,
+            )
+
             with open(temp_output.name, "rb") as f:
                 return f.read()
 

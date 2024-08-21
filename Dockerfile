@@ -37,14 +37,15 @@ RUN apt-get update && \
     libnuma-dev \
     libvpx-dev \
     libasound2-dev \
-    ffmpeg
+    ffmpeg && \
+    ffmpeg -version  # Проверка версии FFmpeg
 
 # Копируем и устанавливаем зависимости
 COPY requirements.txt .
 RUN python -m venv /app/venv && \
     /app/venv/bin/pip install --upgrade pip && \
     /app/venv/bin/pip install -r requirements.txt
-RUN apt-get update && apt-get install -y redis-server
+
 # Копируем весь проект
 COPY . .
 
@@ -53,4 +54,3 @@ EXPOSE 8000
 
 # Запуск Redis и приложения
 CMD redis-server --daemonize yes && /app/venv/bin/python main.py
-
