@@ -2,8 +2,7 @@ import base64
 import json
 import logging
 from datetime import datetime
-
-import ftfy
+from dateutil import parser
 from supabase import create_client, Client
 from handlers.meta import get_user_language, validate_json_format
 from services.openai_service import get_new_thread_id, send_to_gpt
@@ -17,7 +16,8 @@ from utils.config import SUPABASE_URL, SUPABASE_KEY
 from models import User, Message, Survey
 from crud import Postgres
 from utils.config import ASSISTANT2_ID, ASSISTANT_ID
-
+from pydub import AudioSegment
+import io
 from utils.redis_client import clear_user_state
 
 # Инициализация логирования
@@ -33,11 +33,9 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 async def process_message(record, db: Postgres):
     try:
         user_id = record["user_id"]
-
         content = record["content"]
         content_dict = json.loads(content)
-        logger.info(f"type content data: {type(content_dict)}")
-        logger.info(f"type content data: {content_dict}")
+        gpt_response_json = None
         # logger.info(f"content111: {content_str}")
         #
         # # Замена одинарных слешей на двойные
@@ -77,8 +75,6 @@ async def process_message(record, db: Postgres):
             }
 
         message_data = content_dict
-        logger.info(f"Decoded message data: {message_data}")
-        logger.info(f"type message data: {type(message_data)}")
 
         user_language = await get_user_language(
             user_id, message_data.get("language"), db
@@ -88,6 +84,20 @@ async def process_message(record, db: Postgres):
         if is_audio:
             audio_content_encoded = message_data["audio"]
             audio_content = base64.b64decode(audio_content_encoded)
+
+            # Создаем объект AudioSegment из данных AAC
+            audio = AudioSegment.from_file(
+                io.BytesIO(audio_content), format="aac"
+            )
+
+            # Конвертируем в OGG
+            ogg_io = io.BytesIO()
+            audio.export(ogg_io, format="ogg")
+            ogg_io.seek(0)
+
+            # Получаем данные для транскрибации
+            audio_content = ogg_io.read()
+
             text = recognize_speech(
                 audio_content,
                 lang="kk-KK" if user_language == "kk" else "ru-RU",
@@ -158,7 +168,7 @@ async def process_message(record, db: Postgres):
                     "message": "Response text is empty.",
                 }
 
-            message_id = await save_response_to_db(
+            message_id, gpt_response_json = await save_response_to_db(
                 user_id, response_text, db, is_audio
             )
             logger.info("Message processing completed1.")
@@ -192,7 +202,7 @@ async def process_message(record, db: Postgres):
                     "message": "Response text is empty.",
                 }
 
-            message_id = await save_response_to_db(
+            message_id, gpt_response_json = await save_response_to_db(
                 user_id, response_text, db, is_audio
             )
             logger.info("Message processing completed2.")
@@ -200,28 +210,33 @@ async def process_message(record, db: Postgres):
                 str(user_id), "response_received"
             )
 
-            if is_audio:
-                audio_response = synthesize_speech(
-                    response_text, user_language
-                )
-                if audio_response:
-                    message_id = await save_response_to_db(
-                        user_id, audio_response, db
-                    )
-                else:
-                    logger.error("Audio response is empty.")
+            # if is_audio:
+            #     audio_response = synthesize_speech(
+            #         response_text, user_language
+            #     )
+            #     if audio_response:
+            #         message_id, gpt_response_json = await save_response_to_db(
+            #             user_id, audio_response, db
+            #         )
+            #         logger.info(
+            #             f"gpt_response_json111: {gpt_response_json[:200]}"
+            #         )
+            #
+            #     else:
+            #         logger.error("Audio response is empty.")
 
             await parse_and_save_json_response(
                 user_id, full_response, db, assistant_id
             )
-            logger.info(f"response_text in process message: {response_text}")
+            logger.info(
+                f"response_text in process message: {response_text[:200]}"
+            )
 
         await redis_client.mark_message_as_processed(user_id, message_id)
         if await final_response_reached(full_response):
             await clear_user_state(user_id, [message_id])
 
-        logger.info(f"message_id111: {message_id}")
-        return response_text, message_id
+        return message_id, gpt_response_json
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")
@@ -256,18 +271,16 @@ async def final_response_reached(full_response):
 async def save_response_to_db(user_id, response_text, db, is_audio=False):
     try:
         if response_text:
-            logger.info(f"Response text before synthesis: {response_text}")
+            logger.info(
+                f"Response text before synthesis: {response_text[:100]}"
+            )
             audio_response = synthesize_speech(response_text, "ru")
             if audio_response:
                 audio_response_encoded = base64.b64encode(
                     audio_response
                 ).decode("utf-8")
-                # gpt_response_json = json.dumps(
-                #     {"text": response_text, "audio": audio_response_encoded},
-                #     ensure_ascii=False,
-                # )
                 gpt_response_json = json.dumps(
-                    {"text": response_text},
+                    {"text": response_text, "audio": audio_response_encoded},
                     ensure_ascii=False,
                 )
 
@@ -290,10 +303,11 @@ async def save_response_to_db(user_id, response_text, db, is_audio=False):
                     "id",
                 )
                 logger.info(f"Message ID retrieved: {message_id}")
-                return str(message_id)
+
+                return str(message_id), gpt_response_json
             else:
                 logger.error(
-                    f"Audio response is None for text: {response_text}"
+                    f"Audio response is None for text: {response_text[:100]}"
                 )
         else:
             logger.error("Response text is empty, cannot save to database.")
@@ -333,17 +347,18 @@ async def parse_and_save_json_response(
                 if isinstance(assistant_id, bytes):
                     assistant_id = assistant_id.decode("utf-8")
 
-                if "birthdate" in response_data and response_data["birthdate"]:
+                if (
+                    "birthdate" in response_data
+                    and response_data["birthdate"] is not None
+                ):
                     try:
-                        birthdate_str = response_data["birthdate"]
+                        birthdate_str = response_data["birthdate"].strip()
                         try:
                             birthdate = datetime.strptime(
                                 birthdate_str, "%d.%m.%Y"
                             ).date()
                         except ValueError:
-                            birthdate = datetime.strptime(
-                                birthdate_str, "%d %B %Y"
-                            ).date()
+                            birthdate = parser.parse(birthdate_str).date()
                         response_data["birthdate"] = birthdate
                     except ValueError as e:
                         logger.error(f"Error parsing birthdate: {e}")

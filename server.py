@@ -155,7 +155,7 @@ async def handle_connection(websocket, path):
     async for message in websocket:
         try:
             data = json.loads(message)
-
+            logger.info(f"data: {data}")
             token = data.get("token")
             user_data = await verify_token_with_auth_server(token)
             if not user_data:
@@ -262,7 +262,7 @@ async def handle_connection(websocket, path):
                             f"User message with ID {user_message_id} not found."
                         )
 
-                    response_text, message_id = await process_message(
+                    message_id, gpt_response_json = await process_message(
                         message_data, db
                     )
                     response_from_bot = {
@@ -272,7 +272,7 @@ async def handle_connection(websocket, path):
                             "created_at": datetime.now().strftime(
                                 "%Y-%m-%dT%H:%M:%SZ"
                             ),
-                            "content": {"text": response_text},
+                            "content": gpt_response_json,
                             "is_created_by_user": False,
                         },
                     }
@@ -285,7 +285,7 @@ async def handle_connection(websocket, path):
                         "type": "response",
                         "status": "error",
                         "error": "server_error",
-                        "message": e,
+                        "message": str(e),
                     }
                     await websocket.send(
                         json.dumps(response, ensure_ascii=False)
@@ -298,7 +298,7 @@ async def handle_connection(websocket, path):
                         "type": "response",
                         "status": "error",
                         "error": "server_error",
-                        "message": f"Error processing message: {e}",
+                        "message": f"Error processing message: {str(e)}",
                     },
                     ensure_ascii=False,
                 )

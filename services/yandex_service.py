@@ -1,5 +1,8 @@
 import asyncio
+import tempfile
 
+from pydub import AudioSegment
+import io
 import requests
 import logging
 from utils.config import YANDEX_OAUTH_TOKEN, YANDEX_FOLDER_ID
@@ -58,7 +61,7 @@ def recognize_speech(audio_content, lang="ru-RU"):
 def synthesize_speech(text, lang_code):
     try:
         logger.info(
-            f"Starting synthesis for text: '{text}' with lang_code: '{lang_code}'"
+            f"Starting synthesis for text: '{text[:100]}' with lang_code: '{lang_code}'"
         )
         voice_settings = {
             "ru": {"lang": "ru-RU", "voice": "jane", "emotion": "good"},
@@ -80,10 +83,21 @@ def synthesize_speech(text, lang_code):
         }
         response = requests.post(url, headers=headers, data=data, stream=True)
         if response.status_code == 200:
-            logger.info(f"Audio response content: OK for text: '{text}'")
-            return response.content
+            logger.info(f"Audio response content: OK for text: '{text[:100]}'")
+            # Конвертация в aac
+            audio = AudioSegment.from_file(
+                io.BytesIO(response.content), format="mp3"
+            )
+            temp_output = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".aac"
+            )
+            audio.export(temp_output.name, format="mp4", codec="aac")
+            temp_output.close()
+            with open(temp_output.name, "rb") as f:
+                return f.read()
+
         else:
-            error_message = f"Failed to synthesize speech, status code: {response.status_code}, response text: {response.text}"
+            error_message = f"Failed to synthesize speech, status code: {response.status_code}, response text: {response.text[:200]}"
             logger.error(error_message)
             raise Exception(error_message)
     except Exception as e:
