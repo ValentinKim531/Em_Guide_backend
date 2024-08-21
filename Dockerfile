@@ -4,7 +4,7 @@ FROM python:3.10.2
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Обновление и установка зависимостей для сборки FFmpeg
+# Обновление и установка зависимостей для FFmpeg
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y \
@@ -36,27 +36,8 @@ RUN apt-get update && \
     libx265-dev \
     libnuma-dev \
     libvpx-dev \
-    libasound2-dev
-
-# Клонирование и сборка FFmpeg с поддержкой libfdk-aac
-RUN git clone --depth 1 https://git.ffmpeg.org/ffmpeg.git ffmpeg && \
-    cd ffmpeg && \
-    ./configure \
-      --enable-gpl \
-      --enable-libass \
-      --enable-libfdk-aac \
-      --enable-libfreetype \
-      --enable-libmp3lame \
-      --enable-libopus \
-      --enable-libvorbis \
-      --enable-libvpx \
-      --enable-libx264 \
-      --enable-libx265 \
-      --enable-nonfree && \
-    make -j$(nproc) && \
-    make install && \
-    make distclean && \
-    hash -r
+    libasound2-dev \
+    ffmpeg
 
 # Копируем и устанавливаем зависимости
 COPY requirements.txt .
