@@ -4,7 +4,7 @@ FROM python:3.10.2
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Обновление и установка зависимостей для FFmpeg
+# Обновление и установка зависимостей для FFmpeg и Redis
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y \
@@ -37,8 +37,8 @@ RUN apt-get update && \
     libnuma-dev \
     libvpx-dev \
     libasound2-dev \
-    ffmpeg && \
-    ffmpeg -version  # Проверка версии FFmpeg
+    ffmpeg \
+    redis-server
 
 # Копируем и устанавливаем зависимости
 COPY requirements.txt .
@@ -53,4 +53,4 @@ COPY . .
 EXPOSE 8000
 
 # Запуск Redis и приложения
-CMD redis-server --daemonize yes && /app/venv/bin/python main.py
+CMD service redis-server start && /app/venv/bin/python main.py
