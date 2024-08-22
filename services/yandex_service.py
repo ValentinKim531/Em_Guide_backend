@@ -1,10 +1,11 @@
 import asyncio
-import subprocess
+import ffmpeg
 import tempfile
-import io
 import requests
 import logging
 from utils.config import YANDEX_OAUTH_TOKEN, YANDEX_FOLDER_ID
+import subprocess
+
 
 YANDEX_IAM_TOKEN = None
 logger = logging.getLogger(__name__)
@@ -57,6 +58,28 @@ def recognize_speech(audio_content, lang="ru-RU"):
         return None
 
 
+def convert_mp3_to_aac(input_mp3, output_aac):
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",  # Overwrite output files without asking
+                "-i",
+                input_mp3,
+                "-c:a",
+                "aac",
+                output_aac,
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        logger.info(f"Conversion successful: {output_aac}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr.decode('utf8')}")
+        raise
+
+
 def synthesize_speech(text, lang_code):
     try:
         logger.info(
@@ -84,33 +107,30 @@ def synthesize_speech(text, lang_code):
         if response.status_code == 200:
             logger.info(f"Audio response content: OK for text: '{text[:100]}'")
 
-            # Конвертация в aac
-            input_audio = io.BytesIO(response.content)
+            # Сохранение MP3 во временный файл
             temp_input = tempfile.NamedTemporaryFile(
                 delete=False, suffix=".mp3"
             )
+            with open(temp_input.name, "wb") as f:
+                f.write(response.content)
+
+            # Создание временного файла для вывода AAC
             temp_output = tempfile.NamedTemporaryFile(
                 delete=False, suffix=".aac"
             )
-            with open(temp_input.name, "wb") as f:
-                f.write(input_audio.read())
 
-            # Использование ffmpeg для конвертации
-            subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    temp_input.name,
-                    "-c:a",
-                    "aac",
-                    temp_output.name,
-                ],
-                check=True,
-            )
+            # Конвертация MP3 в AAC с использованием subprocess
+            convert_mp3_to_aac(temp_input.name, temp_output.name)
 
+            # Чтение и возврат содержимого AAC файла
             with open(temp_output.name, "rb") as f:
-                return f.read()
+                aac_data = f.read()
+
+            # Удаление временных файлов
+            temp_input.close()
+            temp_output.close()
+
+            return aac_data
 
         else:
             error_message = f"Failed to synthesize speech, status code: {response.status_code}, response text: {response.text[:200]}"

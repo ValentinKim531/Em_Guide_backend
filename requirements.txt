@@ -17,6 +17,7 @@ et-xmlfile==1.1.0
 exceptiongroup==1.2.2
 fastapi==0.111.1
 fastapi-cli==0.0.4
+ffmpeg==1.4
 ftfy==6.2.3
 gotrue==2.5.5
 greenlet==3.0.3

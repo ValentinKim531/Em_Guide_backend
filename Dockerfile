@@ -53,4 +53,4 @@ COPY . .
 EXPOSE 8000
 
 # Запуск Redis и приложения
-CMD service redis-server start && /app/venv/bin/python main.py
+CMD redis-server --daemonize yes && /app/venv/bin/python main.py
