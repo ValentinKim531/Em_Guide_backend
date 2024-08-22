@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import datetime
 from dateutil import parser
+from pydub.exceptions import CouldntDecodeError
 from supabase import create_client, Client
 from handlers.meta import get_user_language, validate_json_format
 from services.openai_service import get_new_thread_id, send_to_gpt
@@ -89,15 +90,33 @@ async def process_message(record, db: Postgres):
 
                 # Создаем объект AudioSegment из данных AAC
                 try:
-                    audio = AudioSegment.from_file(
-                        io.BytesIO(audio_content), format="aac"
-                    )
-                    logger.info(
-                        "Successfully created AudioSegment from AAC data."
-                    )
+                    audio = None
+                    try:
+                        audio = AudioSegment.from_file(
+                            io.BytesIO(audio_content), format="aac"
+                        )
+                        logger.info(
+                            "Successfully created AudioSegment from AAC data."
+                        )
+                    except CouldntDecodeError as e:
+                        logger.warning(
+                            f"Failed to decode AAC as 'aac', attempting as 'mp4'. Error: {e}"
+                        )
+                        audio = AudioSegment.from_file(
+                            io.BytesIO(audio_content), format="mp4"
+                        )
+                        logger.info(
+                            "Successfully created AudioSegment from MP4 data."
+                        )
+
+                    if not audio:
+                        raise CouldntDecodeError(
+                            "Failed to decode audio with known formats."
+                        )
+
                 except Exception as e:
                     logger.error(
-                        f"Failed to create AudioSegment from AAC data: {e}"
+                        f"Failed to create AudioSegment from AAC or MP4 data: {e}"
                     )
                     raise
 
