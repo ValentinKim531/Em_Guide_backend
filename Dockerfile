@@ -4,11 +4,14 @@ FROM python:3.10.2
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Обновляем и устанавливаем необходимые пакеты
+# Обновление и установка необходимых пакетов
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y \
-    redis-server && \
-    apt-get clean
+    redis-server \
+    libasound2-dev \
+    gcc \
+    ffmpeg
 
 # Копируем и устанавливаем зависимости
 COPY requirements.txt .
@@ -23,4 +26,4 @@ COPY . .
 EXPOSE 8000
 
 # Запуск Redis и приложения
-CMD redis-server --daemonize yes && /app/venv/bin/python main.py
+CMD service redis-server start && /app/venv/bin/python main.py
