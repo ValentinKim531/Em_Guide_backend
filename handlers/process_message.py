@@ -83,7 +83,7 @@ async def process_message(record, db: Postgres):
             user_id, message_data.get("language"), db
         )
 
-        is_audio = "audio" in message_data
+        is_audio = "audio" in message_data and message_data["audio"]
         if is_audio:
             try:
                 audio_content_encoded = message_data["audio"]
