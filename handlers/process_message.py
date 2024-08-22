@@ -82,32 +82,71 @@ async def process_message(record, db: Postgres):
 
         is_audio = "audio" in message_data
         if is_audio:
-            audio_content_encoded = message_data["audio"]
-            audio_content = base64.b64decode(audio_content_encoded)
+            try:
+                audio_content_encoded = message_data["audio"]
+                audio_content = base64.b64decode(audio_content_encoded)
+                logger.info("Successfully decoded base64 audio content.")
 
-            # Создаем объект AudioSegment из данных AAC
-            audio = AudioSegment.from_file(
-                io.BytesIO(audio_content), format="aac"
-            )
+                # Создаем объект AudioSegment из данных AAC
+                try:
+                    audio = AudioSegment.from_file(
+                        io.BytesIO(audio_content), format="aac"
+                    )
+                    logger.info(
+                        "Successfully created AudioSegment from AAC data."
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create AudioSegment from AAC data: {e}"
+                    )
+                    raise
 
-            # Конвертируем в OGG
-            ogg_io = io.BytesIO()
-            audio.export(ogg_io, format="ogg")
-            ogg_io.seek(0)
+                # Конвертируем в OGG
+                try:
+                    ogg_io = io.BytesIO()
+                    audio.export(ogg_io, format="ogg")
+                    ogg_io.seek(0)
+                    audio_content = ogg_io.read()
+                    logger.info("Successfully converted audio to OGG format.")
+                except Exception as e:
+                    logger.error(f"Failed to convert audio to OGG format: {e}")
+                    raise
 
-            # Получаем данные для транскрибации
-            audio_content = ogg_io.read()
+                # Получаем данные для транскрибации
+                try:
+                    text = recognize_speech(
+                        audio_content,
+                        lang="kk-KK" if user_language == "kk" else "ru-RU",
+                    )
+                    logger.info(f"Speech recognition result: {text}")
+                except Exception as e:
+                    logger.error(f"Speech recognition failed: {e}")
+                    text = None
 
-            text = recognize_speech(
-                audio_content,
-                lang="kk-KK" if user_language == "kk" else "ru-RU",
-            )
-            if user_language == "kk" and text:
-                text = translate_text(text, source_lang="kk", target_lang="ru")
+                if user_language == "kk" and text:
+                    try:
+                        text = translate_text(
+                            text, source_lang="kk", target_lang="ru"
+                        )
+                        logger.info(f"Translation result: {text}")
+                    except Exception as e:
+                        logger.error(f"Translation failed: {e}")
+                        text = None
+
+            except Exception as e:
+                logger.error(f"Error processing audio message: {e}")
+                text = None
         else:
             text = message_data["text"]
             if user_language == "kk":
-                text = translate_text(text, source_lang="kk", target_lang="ru")
+                try:
+                    text = translate_text(
+                        text, source_lang="kk", target_lang="ru"
+                    )
+                    logger.info(f"Translation result: {text}")
+                except Exception as e:
+                    logger.error(f"Translation failed: {e}")
+                    text = None
 
         if text is None:
             response_text = "К сожалению, я не смог распознать ваш голос. Пожалуйста, повторите свой запрос."
