@@ -176,6 +176,18 @@ async def handle_connection(websocket, path):
                 content_dict = data.get("data", {}).get("content", {})
                 logger.info(f"Original content dictionary: {content_dict}")
 
+                # Если content является строкой, попробуем распарсить как JSON
+                if isinstance(content_dict, str):
+                    try:
+                        content_dict = json.loads(content_dict)
+                        logger.info(
+                            "Content was a string and has been successfully parsed into a dictionary."
+                        )
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"Failed to parse content string as JSON: {e}"
+                        )
+
                 # Декодирование поля 'text' с помощью ftfy
                 if "text" in content_dict:
                     fixed_text = ftfy.fix_text(content_dict["text"])
@@ -248,15 +260,39 @@ async def handle_connection(websocket, path):
                                 "created_at": user_message.created_at.strftime(
                                     "%Y-%m-%dT%H:%M:%SZ"
                                 ),
-                                "content": json.loads(user_message.content),
+                                "content": user_message.content,
                                 "is_created_by_user": True,
                             },
                         }
-                        await websocket.send(
-                            json.dumps(
+
+                        try:
+                            log_message = json.dumps(
                                 response_from_bot_user, ensure_ascii=False
                             )
-                        )
+                            shortened_log_message = (
+                                f"{log_message[:300]}...{log_message[-200:]}"
+                            )
+                            logger.info(
+                                f"Sending response to user (success confirmation): {shortened_log_message}"
+                            )
+                            await websocket.send(
+                                json.dumps(
+                                    response_from_bot_user, ensure_ascii=False
+                                )
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to send JSON response (user confirmation): {e}"
+                            )
+                            response_error = {
+                                "type": "response",
+                                "status": "error",
+                                "error": "json_serialization_error",
+                                "message": f"Error serializing response to JSON: {str(e)}",
+                            }
+                            await websocket.send(
+                                json.dumps(response_error, ensure_ascii=False)
+                            )
                     else:
                         logger.error(
                             f"User message with ID {user_message_id} not found."
@@ -276,9 +312,33 @@ async def handle_connection(websocket, path):
                             "is_created_by_user": False,
                         },
                     }
-                    await websocket.send(
-                        json.dumps(response_from_bot, ensure_ascii=False)
-                    )
+
+                    try:
+                        log_message = json.dumps(
+                            response_from_bot, ensure_ascii=False
+                        )
+                        shortened_log_message = (
+                            f"{log_message[:300]}...{log_message[-200:]}"
+                        )
+                        logger.info(
+                            f"Sending response from assistant: {shortened_log_message}"
+                        )
+                        await websocket.send(
+                            json.dumps(response_from_bot, ensure_ascii=False)
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to send JSON response (assistant response): {e}"
+                        )
+                        response_error = {
+                            "type": "response",
+                            "status": "error",
+                            "error": "json_serialization_error",
+                            "message": f"Error serializing response to JSON: {str(e)}",
+                        }
+                        await websocket.send(
+                            json.dumps(response_error, ensure_ascii=False)
+                        )
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
                     response = {
