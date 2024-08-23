@@ -1,6 +1,5 @@
 import asyncio
-import codecs
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import httpx
 import websockets
 import json
@@ -219,49 +218,32 @@ async def handle_connection(websocket, path):
             elif message_type == "message":
 
                 is_created_by_user = data.get("data").get("is_created_by_user")
+                front_id = data.get("data").get("front_id")
 
                 message_data = {
                     "user_id": user_id,
                     "content": json.dumps(content, ensure_ascii=False),
-                    "created_at": datetime.now(),
                     "is_created_by_user": is_created_by_user,
+                    "front_id": front_id,
                 }
                 try:
-                    await db.add_entity(message_data, Message)
+                    saved_message = await db.add_entity(message_data, Message)
 
-                    user_message_id = await db.get_entity_parameter(
-                        Message,
-                        {
-                            "user_id": str(user_id),
-                            "created_at": message_data["created_at"],
-                        },
-                        "id",
-                    )
-                    logger.info(f"user_message_id111: {user_message_id}")
-                    user_message = await db.get_entity_parameter(
-                        Message,
-                        {
-                            "id": (
-                                str(user_message_id)
-                                if user_message_id
-                                else None
-                            )
-                        },
-                    )
-                    logger.info(f"user_message111: {user_message}")
+                    if saved_message:
+                        logger.info(f"saved_messaage: {saved_message}")
 
-                    if user_message_id:
                         response_from_bot_user = {
                             "type": "response",
                             "status": "success",
                             "action": "message",
                             "data": {
-                                "id": str(user_message_id),
-                                "created_at": user_message.created_at.strftime(
+                                "id": str(saved_message.id),
+                                "created_at": saved_message.created_at.strftime(
                                     "%Y-%m-%dT%H:%M:%SZ"
                                 ),
-                                "content": user_message.content,
+                                "content": saved_message.content,
                                 "is_created_by_user": True,
+                                "front_id": saved_message.front_id,
                             },
                         }
 
@@ -293,10 +275,6 @@ async def handle_connection(websocket, path):
                             await websocket.send(
                                 json.dumps(response_error, ensure_ascii=False)
                             )
-                    else:
-                        logger.error(
-                            f"User message with ID {user_message_id} not found."
-                        )
 
                     message_id, gpt_response_json = await process_message(
                         message_data, db

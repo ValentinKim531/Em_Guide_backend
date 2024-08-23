@@ -155,6 +155,7 @@ class Message(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     is_created_by_user = Column(Boolean, default=True)
+    front_id = Column(String)
 
     def __repr__(self):
         return (
@@ -163,12 +164,14 @@ class Message(Base):
             "content='{}', "
             "created_at='{}', "
             "is_created_by_user='{}'"
+            "front_id='{}'"
         ).format(
             self.id,
             self.user_id,
             self.content,
             self.created_at,
             self.is_created_by_user,
+            self.front_id,
         )
 
 

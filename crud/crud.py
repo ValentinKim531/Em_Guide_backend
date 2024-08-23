@@ -24,8 +24,11 @@ class Postgres(Database):
                     entity = entity_data
                 session.add(entity)
                 await session.commit()
+                await session.refresh(entity)
+                return entity
         except Exception as e:
             logger.error(f"Error adding entity: {e}")
+            return None
 
     async def get_entity_parameter(
         self,
