@@ -1,16 +1,13 @@
 import base64
 import json
 import logging
-import subprocess
-import tempfile
 from datetime import datetime
 from dateutil import parser
-from pydub.exceptions import CouldntDecodeError
 from supabase import create_client, Client
 from handlers.meta import get_user_language, validate_json_format
+from services.audio_text_processor import process_audio_and_text
 from services.openai_service import get_new_thread_id, send_to_gpt
 from services.yandex_service import (
-    recognize_speech,
     synthesize_speech,
     translate_text,
 )
@@ -19,8 +16,6 @@ from utils.config import SUPABASE_URL, SUPABASE_KEY
 from models import User, Message, Survey
 from crud import Postgres
 from utils.config import ASSISTANT2_ID, ASSISTANT_ID
-from pydub import AudioSegment
-import io
 from utils.redis_client import clear_user_state
 
 # Инициализация логирования
@@ -33,40 +28,13 @@ logger = logging.getLogger(__name__)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
-async def process_message(record, db: Postgres):
+async def process_message(record, user_language, db: Postgres):
     try:
         user_id = record["user_id"]
         content = record["content"]
         content_dict = json.loads(content)
         gpt_response_json = None
-        # logger.info(f"content111: {content_str}")
-        #
-        # # Замена одинарных слешей на двойные
-        # content_str_escaped = content_str.replace("\\", "\\\\")
-        # logger.info(f"Escaped content string: {content_str_escaped}")
-        #
-        # # Попытка декодирования Unicode escape-последовательностей
-        # try:
-        #     # Использование unicode-escape
-        #     decoded_content_str = (
-        #         content_str_escaped.encode("latin1")
-        #         .decode("unicode-escape")
-        #         .encode("latin1")
-        #         .decode("utf-8")
-        #     )
-        #     logger.info(f"Decoded content string: {decoded_content_str}")
-        #
-        #     # Преобразование обратно в JSON
-        #     content = json.loads(decoded_content_str)
-        #     logger.info(f"Decoded message data: {content}")
-        # except UnicodeDecodeError as e:
-        #     logger.error(f"Error decoding content string: {e}")
-        #     return {
-        #         "type": "response",
-        #         "status": "error",
-        #         "error": "invalid_request",
-        #         "message": f"Error decoding the content string: {e}",
-        #     }
+        created_at_str = None
 
         if not validate_json_format(json.dumps(content)):
             logger.error(f"Invalid JSON format: {content}")
@@ -79,105 +47,15 @@ async def process_message(record, db: Postgres):
 
         message_data = content_dict
 
-        user_language = await get_user_language(
-            user_id, message_data.get("language"), db
-        )
+        text = await process_audio_and_text(message_data, user_language)
 
-        is_audio = "audio" in message_data and message_data["audio"]
-        if is_audio:
+        if user_language == "kk":
             try:
-                audio_content_encoded = message_data["audio"]
-                audio_content = base64.b64decode(audio_content_encoded)
-                logger.info("Successfully decoded base64 audio content.")
-
-                # Сохранение аудиоданных в временный файл
-                temp_input = tempfile.NamedTemporaryFile(
-                    delete=False, suffix=".aac"
-                )
-                with open(temp_input.name, "wb") as f:
-                    f.write(audio_content)
-                logger.info(
-                    f"Saved AAC data to temporary file: {temp_input.name}"
-                )
-
-                # Попытка конвертировать с помощью ffmpeg в формат WAV
-                try:
-                    temp_output = tempfile.NamedTemporaryFile(
-                        delete=False, suffix=".wav"
-                    )
-                    ffmpeg_command = [
-                        "ffmpeg",
-                        "-y",
-                        "-i",
-                        temp_input.name,
-                        temp_output.name,
-                    ]
-                    subprocess.run(ffmpeg_command, check=True)
-                    logger.info(
-                        f"Successfully converted AAC to WAV using ffmpeg."
-                    )
-
-                    # Загрузка результата и обработка с помощью AudioSegment
-                    with open(temp_output.name, "rb") as f:
-                        wav_data = f.read()
-                    audio = AudioSegment.from_file(
-                        io.BytesIO(wav_data), format="wav"
-                    )
-                    logger.info(
-                        "Successfully created AudioSegment from WAV data."
-                    )
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"ffmpeg failed to convert AAC to WAV: {e}")
-                    raise CouldntDecodeError(
-                        "Failed to decode AAC file using ffmpeg"
-                    )
-
-                # Конвертируем в OGG
-                try:
-                    ogg_io = io.BytesIO()
-                    audio.export(ogg_io, format="ogg")
-                    ogg_io.seek(0)
-                    audio_content = ogg_io.read()
-                    logger.info("Successfully converted audio to OGG format.")
-                except Exception as e:
-                    logger.error(f"Failed to convert audio to OGG format: {e}")
-                    raise
-
-                # Получаем данные для транскрибации
-                try:
-                    text = recognize_speech(
-                        audio_content,
-                        lang="kk-KK" if user_language == "kk" else "ru-RU",
-                    )
-                    logger.info(f"Speech recognition result: {text}")
-                except Exception as e:
-                    logger.error(f"Speech recognition failed: {e}")
-                    text = None
-
-                if user_language == "kk" and text:
-                    try:
-                        text = translate_text(
-                            text, source_lang="kk", target_lang="ru"
-                        )
-                        logger.info(f"Translation result: {text}")
-                    except Exception as e:
-                        logger.error(f"Translation failed: {e}")
-                        text = None
-
+                text = translate_text(text, source_lang="kk", target_lang="ru")
+                logger.info(f"Translation result: {text}")
             except Exception as e:
-                logger.error(f"Error processing audio message: {e}")
+                logger.error(f"Translation failed: {e}")
                 text = None
-        else:
-            text = message_data["text"]
-            if user_language == "kk":
-                try:
-                    text = translate_text(
-                        text, source_lang="kk", target_lang="ru"
-                    )
-                    logger.info(f"Translation result: {text}")
-                except Exception as e:
-                    logger.error(f"Translation failed: {e}")
-                    text = None
 
         if text is None:
             response_text = "К сожалению, я не смог распознать ваш голос. Пожалуйста, повторите свой запрос."
@@ -238,8 +116,8 @@ async def process_message(record, db: Postgres):
                     "message": "Response text is empty.",
                 }
 
-            message_id, gpt_response_json = await save_response_to_db(
-                user_id, response_text, db, is_audio
+            message_id, gpt_response_json, created_at_str = (
+                await save_response_to_db(user_id, response_text, db)
             )
             logger.info("Message processing completed1.")
             await redis_client.set_user_state(
@@ -272,28 +150,13 @@ async def process_message(record, db: Postgres):
                     "message": "Response text is empty.",
                 }
 
-            message_id, gpt_response_json = await save_response_to_db(
-                user_id, response_text, db, is_audio
+            message_id, gpt_response_json, created_at_str = (
+                await save_response_to_db(user_id, response_text, db)
             )
             logger.info("Message processing completed2.")
             await redis_client.set_user_state(
                 str(user_id), "response_received"
             )
-
-            # if is_audio:
-            #     audio_response = synthesize_speech(
-            #         response_text, user_language
-            #     )
-            #     if audio_response:
-            #         message_id, gpt_response_json = await save_response_to_db(
-            #             user_id, audio_response, db
-            #         )
-            #         logger.info(
-            #             f"gpt_response_json111: {gpt_response_json[:200]}"
-            #         )
-            #
-            #     else:
-            #         logger.error("Audio response is empty.")
 
             await parse_and_save_json_response(
                 user_id, full_response, db, assistant_id
@@ -306,7 +169,7 @@ async def process_message(record, db: Postgres):
         if await final_response_reached(full_response):
             await clear_user_state(user_id, [message_id])
 
-        return message_id, gpt_response_json
+        return message_id, gpt_response_json, created_at_str
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")
@@ -338,7 +201,7 @@ async def final_response_reached(full_response):
         return False
 
 
-async def save_response_to_db(user_id, response_text, db, is_audio=False):
+async def save_response_to_db(user_id, response_text, db):
     try:
         if response_text:
             logger.info(
@@ -357,7 +220,7 @@ async def save_response_to_db(user_id, response_text, db, is_audio=False):
                 logger.info(
                     f"Saving GPT response to the database for user {user_id}"
                 )
-                await db.add_entity(
+                saved_message = await db.add_entity(
                     {
                         "user_id": str(user_id),
                         "content": gpt_response_json,
@@ -367,14 +230,12 @@ async def save_response_to_db(user_id, response_text, db, is_audio=False):
                 )
                 logger.info(f"Response saved to database: for user {user_id}")
 
-                message_id = await db.get_entity_parameter(
-                    Message,
-                    {"user_id": str(user_id), "content": gpt_response_json},
-                    "id",
-                )
+                message_id = saved_message.id
+                created_at = saved_message.created_at
+                created_at_str = created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
                 logger.info(f"Message ID retrieved: {message_id}")
 
-                return str(message_id), gpt_response_json
+                return str(message_id), gpt_response_json, created_at_str
             else:
                 logger.error(
                     f"Audio response is None for text: {response_text[:100]}"

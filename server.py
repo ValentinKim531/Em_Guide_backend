@@ -1,10 +1,12 @@
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 import httpx
 import websockets
 import json
 from crud import Postgres
+from handlers.meta import get_user_language
 from models import Message
+from services.audio_text_processor import process_audio_and_text
 from services.database import async_session
 from handlers.process_message import process_message
 import logging
@@ -220,6 +222,12 @@ async def handle_connection(websocket, path):
                 is_created_by_user = data.get("data").get("is_created_by_user")
                 front_id = data.get("data").get("front_id")
 
+                user_language = await get_user_language(
+                    user_id, content.get("language"), db
+                )
+                text = await process_audio_and_text(content, user_language)
+                content["text"] = text
+
                 message_data = {
                     "user_id": user_id,
                     "content": json.dumps(content, ensure_ascii=False),
@@ -276,16 +284,14 @@ async def handle_connection(websocket, path):
                                 json.dumps(response_error, ensure_ascii=False)
                             )
 
-                    message_id, gpt_response_json = await process_message(
-                        message_data, db
+                    message_id, gpt_response_json, created_at_str = (
+                        await process_message(message_data, user_language, db)
                     )
                     response_from_bot = {
                         "type": "message",
                         "data": {
                             "id": message_id,
-                            "created_at": datetime.now().strftime(
-                                "%Y-%m-%dT%H:%M:%SZ"
-                            ),
+                            "created_at": created_at_str,
                             "content": gpt_response_json,
                             "is_created_by_user": False,
                         },
