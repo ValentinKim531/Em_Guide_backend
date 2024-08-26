@@ -44,8 +44,12 @@ class User(Base):
     const_medication = Column(String)
     const_medication_name = Column(String)
     reminder_time = Column(Time)
-    created_at = Column(DateTime)
-    updated_at = Column(DateTime)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     language = Column(String)
     role = Column(String)
 
@@ -102,8 +106,12 @@ class Survey(Base):
         ForeignKey("users.userid", ondelete="CASCADE"),
         primary_key=True,
     )
-    created_at = Column(DateTime)
-    updated_at = Column(DateTime)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     headache_today = Column(String)
     medicament_today = Column(String)
     pain_intensity = Column(Integer)

@@ -39,10 +39,9 @@ async def process_message(record, user_language, db: Postgres):
         if not validate_json_format(json.dumps(content)):
             logger.error(f"Invalid JSON format: {content}")
             return {
-                "type": "response",
                 "status": "error",
-                "error": "invalid_request",
-                "message": "Invalid JSON format",
+                "error_type": "invalid_request",
+                "error_message": "Invalid JSON format",
             }
 
         message_data = content_dict
@@ -59,14 +58,15 @@ async def process_message(record, user_language, db: Postgres):
 
         if text is None:
             response_text = "К сожалению, я не смог распознать ваш голос. Пожалуйста, повторите свой запрос."
-            await save_response_to_db(user_id, response_text, db)
+            message_id, gpt_response_json, created_at_str = (
+                await save_response_to_db(user_id, response_text, db)
+            )
             logger.info("Text is None, saved response to DB and returning.")
             return {
-                "type": "response",
-                "status": "error",
-                "action": "message",
-                "error": "processing_error",
-                "message": response_text,
+                "status": "success",
+                "message_id": message_id,
+                "gpt_response_json": gpt_response_json,
+                "created_at_str": created_at_str,
             }
 
         user_state = await redis_client.get_user_state(str(user_id))
@@ -81,8 +81,6 @@ async def process_message(record, user_language, db: Postgres):
                 new_user_data = {
                     "userid": str(user_id),
                     "language": user_language,
-                    "created_at": get_current_time_in_almaty_naive(),
-                    "updated_at": get_current_time_in_almaty_naive(),
                 }
                 await db.add_entity(new_user_data, User)
                 logger.info(f"New user {user_id} registered in the database")
@@ -109,11 +107,9 @@ async def process_message(record, user_language, db: Postgres):
             if not response_text:
                 logger.error("Initial response text is empty.")
                 return {
-                    "type": "response",
                     "status": "error",
-                    "action": "message",
-                    "error": "processing_error",
-                    "message": "Response text is empty.",
+                    "error_type": "server_error",
+                    "error_message": "Initial response text is empty.",
                 }
 
             message_id, gpt_response_json, created_at_str = (
@@ -143,11 +139,9 @@ async def process_message(record, user_language, db: Postgres):
             if not response_text:
                 logger.error("Response text is empty.")
                 return {
-                    "type": "response",
                     "status": "error",
-                    "action": "message",
-                    "error": "processing_error",
-                    "message": "Response text is empty.",
+                    "error_type": "server_error",
+                    "error_message": "Response text is empty.",
                 }
 
             message_id, gpt_response_json, created_at_str = (
@@ -169,16 +163,19 @@ async def process_message(record, user_language, db: Postgres):
         if await final_response_reached(full_response):
             await clear_user_state(user_id, [message_id])
 
-        return message_id, gpt_response_json, created_at_str
+        return {
+            "status": "success",
+            "message_id": message_id,
+            "gpt_response_json": gpt_response_json,
+            "created_at_str": created_at_str,
+        }
 
     except Exception as e:
         logger.error(f"Error processing message: {e}")
         return {
-            "type": "response",
             "status": "error",
-            "action": "message",
-            "error": "server_error",
-            "message": "An internal server error occurred.",
+            "error_type": "server_error",
+            "error_message": "An internal server error occurred.",
         }
 
 
@@ -337,12 +334,6 @@ async def parse_and_save_json_response(
                                     )
                     else:
                         try:
-                            response_data["created_at"] = (
-                                get_current_time_in_almaty_naive()
-                            )
-                            response_data["updated_at"] = (
-                                get_current_time_in_almaty_naive()
-                            )
                             await db.add_entity(response_data, User)
                             logger.info(
                                 f"New user {response_data['userid']} added to the database"
@@ -353,12 +344,6 @@ async def parse_and_save_json_response(
                             )
                 else:
                     try:
-                        response_data["created_at"] = (
-                            get_current_time_in_almaty_naive()
-                        )
-                        response_data["updated_at"] = (
-                            get_current_time_in_almaty_naive()
-                        )
                         if response_data["pain_intensity"] is not None:
                             response_data["pain_intensity"] = int(
                                 response_data["pain_intensity"]

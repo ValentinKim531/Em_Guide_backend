@@ -1,11 +1,10 @@
 import asyncio
-from datetime import datetime
 import httpx
 import websockets
 import json
 from crud import Postgres
 from handlers.meta import get_user_language
-from models import Message
+from models import Message, User
 from services.audio_text_processor import process_audio_and_text
 from services.database import async_session
 from handlers.process_message import process_message
@@ -35,7 +34,7 @@ async def verify_token_with_auth_server(token):
         return None
 
 
-async def handle_command(action, user_id, db, data=None):
+async def handle_command(action, user_id, websocket, db, data=None):
     if action == "fetch_history":
         try:
             chat_history = await generate_chat_history(user_id, db)
@@ -144,6 +143,54 @@ async def handle_command(action, user_id, db, data=None):
                 "message": "An internal server error occurred. Please try again later.",
             }
 
+    elif action == "initial_chat":
+        try:
+            user_language = await db.get_entity_parameter(
+                User, {"userid": user_id}, "language"
+            )
+
+            if not user_language:
+                user_language = "ru"
+
+            record = {
+                "user_id": user_id,
+                "content": json.dumps({"text": "initial_chat"}),
+            }
+
+            result = await process_message(record, user_language, db)
+
+            if result["status"] == "error":
+                return {
+                    "type": "response",
+                    "status": "error",
+                    "action": "initial_chat",
+                    "error": result["error_type"],
+                    "message": result["error_message"],
+                }
+            else:
+                return {
+                    "type": "response",
+                    "status": "success",
+                    "action": "initial_chat",
+                    "data": {
+                        "id": result["message_id"],
+                        "created_at": result["created_at_str"],
+                        "content": result["gpt_response_json"],
+                        "is_created_by_user": False,
+                    },
+                }
+
+        except Exception as e:
+            logger.error(f"Error processing initial chat: {e}")
+
+            return {
+                "type": "response",
+                "status": "error",
+                "action": "initial_chat",
+                "error": "server_error",
+                "message": "An internal server error occurred.",
+            }
+
     return {
         "type": "response",
         "status": "error",
@@ -215,7 +262,7 @@ async def handle_connection(websocket, path):
                 response = await handle_command(action, user_id, db, data)
                 await websocket.send(json.dumps(response, ensure_ascii=False))
             elif message_type == "system":
-                response = await handle_command(action, user_id, db)
+                response = await handle_command(action, user_id, websocket, db)
                 await websocket.send(json.dumps(response, ensure_ascii=False))
             elif message_type == "message":
 
@@ -226,7 +273,10 @@ async def handle_connection(websocket, path):
                     user_id, content.get("language"), db
                 )
                 text = await process_audio_and_text(content, user_language)
-                content["text"] = text
+                if text:
+                    content["text"] = text
+                else:
+                    content["text"] = "аудио не распознано"
 
                 message_data = {
                     "user_id": user_id,
@@ -284,45 +334,34 @@ async def handle_connection(websocket, path):
                                 json.dumps(response_error, ensure_ascii=False)
                             )
 
-                    message_id, gpt_response_json, created_at_str = (
-                        await process_message(message_data, user_language, db)
+                    result = await process_message(
+                        message_data, user_language, db
                     )
-                    response_from_bot = {
-                        "type": "message",
-                        "data": {
-                            "id": message_id,
-                            "created_at": created_at_str,
-                            "content": gpt_response_json,
-                            "is_created_by_user": False,
-                        },
-                    }
 
-                    try:
-                        log_message = json.dumps(
-                            response_from_bot, ensure_ascii=False
-                        )
-                        shortened_log_message = (
-                            f"{log_message[:300]}...{log_message[-200:]}"
-                        )
-                        logger.info(
-                            f"Sending response from assistant: {shortened_log_message}"
-                        )
-                        await websocket.send(
-                            json.dumps(response_from_bot, ensure_ascii=False)
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to send JSON response (assistant response): {e}"
-                        )
-                        response_error = {
+                    if result["status"] == "error":
+                        error_response = {
                             "type": "response",
                             "status": "error",
-                            "error": "json_serialization_error",
-                            "message": f"Error serializing response to JSON: {str(e)}",
+                            "error": result["error_type"],
+                            "message": result["error_message"],
                         }
                         await websocket.send(
-                            json.dumps(response_error, ensure_ascii=False)
+                            json.dumps(error_response, ensure_ascii=False)
                         )
+                    else:
+                        success_response = {
+                            "type": "message",
+                            "data": {
+                                "id": result["message_id"],
+                                "created_at": result["created_at_str"],
+                                "content": result["gpt_response_json"],
+                                "is_created_by_user": False,
+                            },
+                        }
+                        await websocket.send(
+                            json.dumps(success_response, ensure_ascii=False)
+                        )
+
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
                     response = {
