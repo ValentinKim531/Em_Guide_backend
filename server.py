@@ -393,9 +393,13 @@ async def handle_connection(websocket, path):
                     )
                 )
             except websockets.exceptions.ConnectionClosedError:
-                logger.warning("Tried to send error message, but the connection was already closed.")
+                logger.warning(
+                    "Tried to send error message, but the connection was already closed."
+                )
             except Exception as send_error:
-                logger.error(f"Failed to send error message over WebSocket: {send_error}")
+                logger.error(
+                    f"Failed to send error message over WebSocket: {send_error}"
+                )
         finally:
             logger.info("Connection closed")
 
@@ -403,7 +407,7 @@ async def handle_connection(websocket, path):
 async def main():
     try:
         server = await websockets.serve(
-            handle_connection, "0.0.0.0", 8081, max_size=10**7
+            handle_connection, "0.0.0.0", 8081, max_size=50_000_000
         )
         print("Server started on ws://0.0.0.0:8081")
         await server.wait_closed()
