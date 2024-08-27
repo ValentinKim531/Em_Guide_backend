@@ -373,24 +373,38 @@ async def handle_connection(websocket, path):
                     await websocket.send(
                         json.dumps(response, ensure_ascii=False)
                     )
+
+        except websockets.exceptions.ConnectionClosedError as e:
+            logger.error(f"Connection closed unexpectedly: {e}")
+        except asyncio.exceptions.IncompleteReadError as e:
+            logger.error(f"Incomplete read error: {e}")
         except Exception as e:
             logger.error(f"Error handling connection: {e}")
-            await websocket.send(
-                json.dumps(
-                    {
-                        "type": "response",
-                        "status": "error",
-                        "error": "server_error",
-                        "message": f"Error processing message: {str(e)}",
-                    },
-                    ensure_ascii=False,
+            try:
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "type": "response",
+                            "status": "error",
+                            "error": "server_error",
+                            "message": f"Error processing message: {str(e)}",
+                        },
+                        ensure_ascii=False,
+                    )
                 )
-            )
+            except websockets.exceptions.ConnectionClosedError:
+                logger.warning("Tried to send error message, but the connection was already closed.")
+            except Exception as send_error:
+                logger.error(f"Failed to send error message over WebSocket: {send_error}")
+        finally:
+            logger.info("Connection closed")
 
 
 async def main():
     try:
-        server = await websockets.serve(handle_connection, "0.0.0.0", 8081)
+        server = await websockets.serve(
+            handle_connection, "0.0.0.0", 8081, max_size=10**7
+        )
         print("Server started on ws://0.0.0.0:8081")
         await server.wait_closed()
     except Exception as e:
