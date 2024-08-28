@@ -4,19 +4,24 @@ import logging
 from datetime import datetime
 from dateutil import parser
 from supabase import create_client, Client
-from handlers.meta import get_user_language, validate_json_format
+from handlers.meta import validate_json_format
 from services.audio_text_processor import process_audio_and_text
+from services.extract_marker_and_options import extract_marker_and_options
 from services.openai_service import get_new_thread_id, send_to_gpt
 from services.yandex_service import (
     synthesize_speech,
     translate_text,
 )
-from utils import get_current_time_in_almaty_naive, redis_client
+from utils import redis_client
 from utils.config import SUPABASE_URL, SUPABASE_KEY
 from models import User, Message, Survey
 from crud import Postgres
 from utils.config import ASSISTANT2_ID, ASSISTANT_ID
 from utils.redis_client import clear_user_state
+from constants.assistants_answers_var import (
+    RegistrationQuestions,
+    DailySurveyQuestions,
+)
 
 # Инициализация логирования
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +38,7 @@ async def process_message(record, user_language, db: Postgres):
         user_id = record["user_id"]
         content = record["content"]
         content_dict = json.loads(content)
-        gpt_response_json = None
+        response_content = None
         created_at_str = None
 
         if not validate_json_format(json.dumps(content)):
@@ -112,9 +117,25 @@ async def process_message(record, user_language, db: Postgres):
                     "error_message": "Initial response text is empty.",
                 }
 
+            # Извлекаем маркер и соответствующие варианты ответов, если они есть
+            response_text, options_data = extract_marker_and_options(
+                response_text, assistant_id
+            )
+
             message_id, gpt_response_json, created_at_str = (
                 await save_response_to_db(user_id, response_text, db)
             )
+
+            response_content = {
+                "text": gpt_response_json,
+            }
+
+            if options_data:
+                response_content["options"] = options_data["options"]
+                response_content["is_custom_option_allowed"] = options_data[
+                    "is_custom_option_allowed"
+                ]
+
             logger.info("Message processing completed1.")
             await redis_client.set_user_state(
                 str(user_id), "awaiting_response"
@@ -126,6 +147,8 @@ async def process_message(record, user_language, db: Postgres):
             )
             thread_id = await redis_client.get_thread_id(user_id)
             assistant_id = await redis_client.get_assistant_id(user_id)
+            if isinstance(assistant_id, bytes):
+                assistant_id = assistant_id.decode("utf-8")
             response_text, new_thread_id, full_response = await send_to_gpt(
                 text, thread_id, assistant_id
             )
@@ -144,9 +167,26 @@ async def process_message(record, user_language, db: Postgres):
                     "error_message": "Response text is empty.",
                 }
 
+            # Извлекаем маркер и соответствующие варианты ответов, если они есть
+            response_text, options_data = extract_marker_and_options(
+                response_text, assistant_id
+            )
+            logger.info(f"options_data: {options_data}")
+            logger.info(f"assistant_id: {assistant_id}")
+
             message_id, gpt_response_json, created_at_str = (
                 await save_response_to_db(user_id, response_text, db)
             )
+
+            response_content = {
+                "text": gpt_response_json,
+            }
+
+            if options_data:
+                response_content["options"] = options_data["options"]
+                response_content["is_custom_option_allowed"] = options_data[
+                    "is_custom_option_allowed"
+                ]
             logger.info("Message processing completed2.")
             await redis_client.set_user_state(
                 str(user_id), "response_received"
@@ -166,7 +206,7 @@ async def process_message(record, user_language, db: Postgres):
         return {
             "status": "success",
             "message_id": message_id,
-            "gpt_response_json": gpt_response_json,
+            "gpt_response_json": response_content,
             "created_at_str": created_at_str,
         }
 

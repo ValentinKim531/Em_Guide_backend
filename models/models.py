@@ -41,6 +41,7 @@ class User(Base):
     country = Column(String)
     city = Column(String)
     medication = Column(String)
+    medication_name = Column(String)
     const_medication = Column(String)
     const_medication_name = Column(String)
     reminder_time = Column(Time)
@@ -65,6 +66,7 @@ class User(Base):
             "country='{}', "
             "city='{}', "
             "medication='{}', "
+            "medication_name='{}', "
             "const_medication='{}', "
             "const_medication_name='{}', "
             "reminder_time='{}', "
@@ -83,6 +85,7 @@ class User(Base):
             self.country,
             self.city,
             self.medication,
+            self.medication_name,
             self.const_medication,
             self.const_medication_name,
             self.reminder_time,
