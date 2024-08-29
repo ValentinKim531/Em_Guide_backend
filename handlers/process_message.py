@@ -18,10 +18,7 @@ from models import User, Message, Survey
 from crud import Postgres
 from utils.config import ASSISTANT2_ID, ASSISTANT_ID
 from utils.redis_client import clear_user_state
-from constants.assistants_answers_var import (
-    RegistrationQuestions,
-    DailySurveyQuestions,
-)
+
 
 # Инициализация логирования
 logging.basicConfig(level=logging.INFO)
@@ -38,7 +35,7 @@ async def process_message(record, user_language, db: Postgres):
         user_id = record["user_id"]
         content = record["content"]
         content_dict = json.loads(content)
-        response_content = None
+        gpt_response_json_new = None
         created_at_str = None
 
         if not validate_json_format(json.dumps(content)):
@@ -126,15 +123,21 @@ async def process_message(record, user_language, db: Postgres):
                 await save_response_to_db(user_id, response_text, db)
             )
 
-            response_content = {
-                "text": gpt_response_json,
-            }
+            # response_content = {
+            #     "text": gpt_response_json,
+            # }
+            # Десериализация JSON-строки обратно в словарь
+            gpt_response_dict = json.loads(gpt_response_json)
 
             if options_data:
-                response_content["options"] = options_data["options"]
-                response_content["is_custom_option_allowed"] = options_data[
+                gpt_response_dict["options"] = options_data["options"]
+                gpt_response_dict["is_custom_option_allowed"] = options_data[
                     "is_custom_option_allowed"
                 ]
+            # Сериализация обратно в JSON-строку
+            gpt_response_json_new = json.dumps(
+                gpt_response_dict, ensure_ascii=False
+            )
 
             logger.info("Message processing completed1.")
             await redis_client.set_user_state(
@@ -178,15 +181,23 @@ async def process_message(record, user_language, db: Postgres):
                 await save_response_to_db(user_id, response_text, db)
             )
 
-            response_content = {
-                "text": gpt_response_json,
-            }
+            # response_content = {
+            #     "text": gpt_response_json,
+            # }
+
+            # Десериализация JSON-строки обратно в словарь
+            gpt_response_dict = json.loads(gpt_response_json)
 
             if options_data:
-                response_content["options"] = options_data["options"]
-                response_content["is_custom_option_allowed"] = options_data[
+                gpt_response_dict["options"] = options_data["options"]
+                gpt_response_dict["is_custom_option_allowed"] = options_data[
                     "is_custom_option_allowed"
                 ]
+
+            gpt_response_json_new = json.dumps(
+                gpt_response_dict, ensure_ascii=False
+            )
+
             logger.info("Message processing completed2.")
             await redis_client.set_user_state(
                 str(user_id), "response_received"
@@ -206,7 +217,7 @@ async def process_message(record, user_language, db: Postgres):
         return {
             "status": "success",
             "message_id": message_id,
-            "gpt_response_json": response_content,
+            "gpt_response_json": gpt_response_json_new,
             "created_at_str": created_at_str,
         }
 
