@@ -14,6 +14,7 @@ from services.history_service import generate_chat_history
 from services.language_service import change_language
 from services.reminder_service import change_reminder_time
 from services.statistics_service import generate_statistics_file
+from utils.redis_client import clear_user_state
 
 db = Postgres(async_session)
 logger = logging.getLogger(__name__)
@@ -145,6 +146,9 @@ async def handle_command(action, user_id, websocket, db, data=None):
 
     elif action == "initial_chat":
         try:
+            # Очищаем стейт для пользователя перед началом нового чата
+            await clear_user_state(user_id, [])
+
             user_language = await db.get_entity_parameter(
                 User, {"userid": user_id}, "language"
             )

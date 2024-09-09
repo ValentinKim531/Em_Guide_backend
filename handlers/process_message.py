@@ -35,6 +35,23 @@ async def process_message(record, user_language, db: Postgres):
         user_id = record["user_id"]
         content = record["content"]
         content_dict = json.loads(content)
+        message_id = record.get(
+            "message_id"
+        )  # Предполагаем, что message_id доступен в записи
+
+        # Проверяем, было ли сообщение уже обработано
+        is_processed = await redis_client.is_message_processed(
+            user_id, message_id
+        )
+        if is_processed:
+            logger.info(
+                f"Message {message_id} already processed for user {user_id}. Skipping."
+            )
+            return {
+                "status": "success",
+                "message": "Message already processed.",
+            }
+
         gpt_response_json_new = None
         created_at_str = None
 
@@ -114,7 +131,6 @@ async def process_message(record, user_language, db: Postgres):
                     "error_message": "Initial response text is empty.",
                 }
 
-            # Извлекаем маркер и соответствующие варианты ответов, если они есть
             response_text, options_data = extract_marker_and_options(
                 response_text, assistant_id
             )
@@ -123,10 +139,6 @@ async def process_message(record, user_language, db: Postgres):
                 await save_response_to_db(user_id, response_text, db)
             )
 
-            # response_content = {
-            #     "text": gpt_response_json,
-            # }
-            # Десериализация JSON-строки обратно в словарь
             gpt_response_dict = json.loads(gpt_response_json)
 
             if options_data:
@@ -134,7 +146,6 @@ async def process_message(record, user_language, db: Postgres):
                 gpt_response_dict["is_custom_option_allowed"] = options_data[
                     "is_custom_option_allowed"
                 ]
-            # Сериализация обратно в JSON-строку
             gpt_response_json_new = json.dumps(
                 gpt_response_dict, ensure_ascii=False
             )
@@ -150,6 +161,8 @@ async def process_message(record, user_language, db: Postgres):
             )
             thread_id = await redis_client.get_thread_id(user_id)
             assistant_id = await redis_client.get_assistant_id(user_id)
+            await redis_client.save_assistant_id(str(user_id), assistant_id)
+
             if isinstance(assistant_id, bytes):
                 assistant_id = assistant_id.decode("utf-8")
             response_text, new_thread_id, full_response = await send_to_gpt(
@@ -170,7 +183,6 @@ async def process_message(record, user_language, db: Postgres):
                     "error_message": "Response text is empty.",
                 }
 
-            # Извлекаем маркер и соответствующие варианты ответов, если они есть
             response_text, options_data = extract_marker_and_options(
                 response_text, assistant_id
             )
@@ -181,11 +193,6 @@ async def process_message(record, user_language, db: Postgres):
                 await save_response_to_db(user_id, response_text, db)
             )
 
-            # response_content = {
-            #     "text": gpt_response_json,
-            # }
-
-            # Десериализация JSON-строки обратно в словарь
             gpt_response_dict = json.loads(gpt_response_json)
 
             if options_data:
@@ -395,15 +402,20 @@ async def parse_and_save_json_response(
                             )
                 else:
                     try:
-                        if response_data["pain_intensity"] is not None:
+                        # Проверка наличия ключа 'pain_intensity' в словаре response_data
+                        if "pain_intensity" in response_data and response_data[
+                            "pain_intensity"
+                        ] not in [None, ""]:
                             response_data["pain_intensity"] = int(
                                 response_data["pain_intensity"]
                             )
                         else:
                             response_data["pain_intensity"] = 0
-                            logger.info(
-                                f"pain_intensity: {response_data['pain_intensity']}"
-                            )
+
+                        logger.info(
+                            f"pain_intensity: {response_data['pain_intensity']}"
+                        )
+
                         await db.add_entity(response_data, Survey)
                         logger.info(
                             f"Survey response saved for user {user_id}"
@@ -412,5 +424,6 @@ async def parse_and_save_json_response(
                         logger.error(
                             f"Error adding or updating response to database: {e}"
                         )
+
     except Exception as e:
         logger.error(f"Error saving response to database: {e}")
