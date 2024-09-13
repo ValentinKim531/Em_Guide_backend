@@ -35,10 +35,11 @@ async def verify_token_with_auth_server(token):
         return None
 
 
-async def handle_command(action, user_id, websocket, db, data=None):
+async def handle_command(action, user_id, database: Postgres, data=None):
+
     if action == "fetch_history":
         try:
-            chat_history = await generate_chat_history(user_id, db)
+            chat_history = await generate_chat_history(user_id, database)
             if not chat_history:
                 return {
                     "type": "response",
@@ -64,7 +65,7 @@ async def handle_command(action, user_id, websocket, db, data=None):
             }
     elif action == "export_stats":
         try:
-            stats = await generate_statistics_file(user_id, db)
+            stats = await generate_statistics_file(user_id, database)
             if not stats:
                 return {
                     "type": "response",
@@ -99,7 +100,9 @@ async def handle_command(action, user_id, websocket, db, data=None):
                     "error": "no_reminder_time",
                     "message": "No reminder_time pointed.",
                 }
-            response = await change_reminder_time(user_id, reminder_time, db)
+            response = await change_reminder_time(
+                user_id, reminder_time, database
+            )
             return {
                 "type": "response",
                 "status": "success",
@@ -127,7 +130,7 @@ async def handle_command(action, user_id, websocket, db, data=None):
                     "error": "no_change_language",
                     "message": "No language pointed.",
                 }
-            response = await change_language(user_id, language, db)
+            response = await change_language(user_id, language, database)
             return {
                 "type": "response",
                 "status": "success",
@@ -149,7 +152,7 @@ async def handle_command(action, user_id, websocket, db, data=None):
             # Очищаем стейт для пользователя перед началом нового чата
             await clear_user_state(user_id, [])
 
-            user_language = await db.get_entity_parameter(
+            user_language = await database.get_entity_parameter(
                 User, {"userid": user_id}, "language"
             )
 
@@ -161,7 +164,7 @@ async def handle_command(action, user_id, websocket, db, data=None):
                 "content": json.dumps({"text": "initial_chat"}),
             }
 
-            result = await process_message(record, user_language, db)
+            result = await process_message(record, user_language, database)
 
             if result["status"] == "error":
                 return {
@@ -266,7 +269,7 @@ async def handle_connection(websocket, path):
                 response = await handle_command(action, user_id, db, data)
                 await websocket.send(json.dumps(response, ensure_ascii=False))
             elif message_type == "system":
-                response = await handle_command(action, user_id, websocket, db)
+                response = await handle_command(action, user_id, db, data)
                 await websocket.send(json.dumps(response, ensure_ascii=False))
             elif message_type == "message":
 
